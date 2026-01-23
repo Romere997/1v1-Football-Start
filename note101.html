@@ -1,0 +1,1707 @@
+<!-- /open_field_vertical_sprites.html
+     Save as open_field_vertical_sprites.html and open in a modern browser.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Open Field — Vertical + Sprites (HiFi MVP)</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height: 100%; margin: 0; background: #0b0f14; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    .wrap { height: 100%; display: grid; place-items: center; }
+    canvas { background: #0f1722; border-radius: 16px; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+    .hint {
+      position: fixed; left: 14px; bottom: 12px; opacity: .9; font-size: 12px; line-height: 1.35;
+      background: rgba(0,0,0,.35); padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08);
+      max-width: 840px;
+    }
+    kbd { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); padding: 1px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="game" width="1000" height="600"></canvas>
+  </div>
+
+  <div class="hint">
+    <div><strong>Open Field (Vertical + Sprites)</strong> — Runner goes bottom → top</div>
+    <div>
+      <kbd>Enter</kbd> start • <kbd>Esc</kbd> pause • <kbd>R</kbd> reset • <kbd>M</kbd> toggle 2P • <kbd>V</kbd> toggle debug
+    </div>
+    <div>
+      Offense: <kbd>WASD</kbd> move • <kbd>Shift</kbd> sprint • Specials (during run OR encounter): <kbd>1</kbd> Truck • <kbd>2</kbd> Juke • <kbd>3</kbd> Spin • Break Drag: <kbd>Space</kbd>
+    </div>
+    <div>
+      Defense (2P): <kbd>IJKL</kbd> move • <kbd>Right Shift</kbd> sprint • Encounter counters: <kbd>7</kbd> Wrap • <kbd>8</kbd> Dive • <kbd>9</kbd> Hit • <kbd>0</kbd> Contain
+    </div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const FIXED_DT = 1 / 60;
+  const MAX_FRAME = 0.05;
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const now = () => performance.now() / 1000;
+
+  const v2 = (x = 0, y = 0) => ({ x, y });
+  const vAdd = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+  const vSub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+  const vMul = (a, s) => ({ x: a.x * s, y: a.y * s });
+  const vDot = (a, b) => a.x * b.x + a.y * b.y;
+  const vLen = (a) => Math.hypot(a.x, a.y);
+  const vNorm = (a) => {
+    const l = vLen(a) || 1;
+    return { x: a.x / l, y: a.y / l };
+  };
+  const vClampLen = (a, maxLen) => {
+    const l = vLen(a);
+    if (l <= maxLen) return a;
+    const n = vMul(a, 1 / (l || 1));
+    return vMul(n, maxLen);
+  };
+
+  const angleBetween = (a, b) => {
+    const na = vNorm(a);
+    const nb = vNorm(b);
+    const d = clamp(vDot(na, nb), -1, 1);
+    return Math.acos(d);
+  };
+
+  const KEYS = new Set();
+  window.addEventListener("keydown", (e) => {
+    KEYS.add(e.code);
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+  }, { passive: false });
+  window.addEventListener("keyup", (e) => KEYS.delete(e.code));
+
+  const Mode = Object.freeze({ MENU: "MENU", PLAY: "PLAY", POST: "POST", PAUSE: "PAUSE" });
+  const Outcome = Object.freeze({ TD: "TOUCHDOWN", STOP: "CLEAN_STOP", DRAG: "DRAG", WHIFF: "WHIFF", GLANCE: "GLANCING", OUT: "OUT" });
+  const OffMove = Object.freeze({ TRUCK: "TRUCK", JUKE: "JUKE", SPIN: "SPIN", NONE: "NONE" });
+  const DefMove = Object.freeze({ WRAP: "WRAP", DIVE: "DIVE", HIT: "HIT", CONTAIN: "CONTAIN", NONE: "NONE" });
+
+  const Archetype = Object.freeze({
+    OFF_POWER: "OFF_POWER",
+    OFF_ELUSIVE: "OFF_ELUSIVE",
+    OFF_HYBRID: "OFF_HYBRID",
+    DEF_SURE: "DEF_SURE",
+    DEF_HIT: "DEF_HIT",
+    DEF_SPEED: "DEF_SPEED",
+  });
+
+  // World is vertical: y decreases toward end zone.
+  const FIELD = {
+    worldW: 70,
+    worldH: 150,
+    x0: 0,
+    y0: 0,
+    x1: 70,
+    y1: 150,
+    startY: 130,
+    endZoneY: 18,
+    sidelinePad: 2.2,
+  };
+
+  const mapYToYards = (y) => {
+    const t = clamp((FIELD.startY - y) / (FIELD.startY - FIELD.endZoneY), 0, 1);
+    return Math.round(lerp(50, 100, t));
+  };
+
+  function statsFor(archetype) {
+    if (archetype === Archetype.OFF_POWER) {
+      return {
+        kind: "OFF",
+        mass: 112,
+        speed: 8.0,
+        accel: 9.0,
+        agility: 7.2,
+        footwork: 7.0,
+        decel: 8.2,
+        balance: 9.3,
+        power: 9.6,
+        breakTackle: 9.0,
+        leverage: 9.2,
+        recovery: 8.4,
+        vision: 7.0,
+        deception: 6.6,
+        composure: 8.0,
+      };
+    }
+    if (archetype === Archetype.OFF_ELUSIVE) {
+      return {
+        kind: "OFF",
+        mass: 88,
+        speed: 9.0,
+        accel: 9.8,
+        agility: 9.7,
+        footwork: 9.6,
+        decel: 9.2,
+        balance: 7.4,
+        power: 6.5,
+        breakTackle: 7.8,
+        leverage: 7.0,
+        recovery: 9.2,
+        vision: 8.6,
+        deception: 9.2,
+        composure: 8.4,
+      };
+    }
+    if (archetype === Archetype.OFF_HYBRID) {
+      return {
+        kind: "OFF",
+        mass: 100,
+        speed: 8.6,
+        accel: 9.3,
+        agility: 8.6,
+        footwork: 8.4,
+        decel: 8.7,
+        balance: 8.4,
+        power: 8.1,
+        breakTackle: 8.4,
+        leverage: 8.2,
+        recovery: 8.8,
+        vision: 8.0,
+        deception: 8.2,
+        composure: 8.6,
+      };
+    }
+    if (archetype === Archetype.DEF_SURE) {
+      return {
+        kind: "DEF",
+        mass: 102,
+        speed: 8.1,
+        accel: 9.0,
+        agility: 8.1,
+        footwork: 7.8,
+        decel: 8.4,
+        balance: 9.2,
+        grip: 9.6,
+        leverage: 9.0,
+        impact: 7.6,
+        recovery: 8.6,
+        anticipation: 8.9,
+        vision: 8.0,
+      };
+    }
+    if (archetype === Archetype.DEF_HIT) {
+      return {
+        kind: "DEF",
+        mass: 108,
+        speed: 7.8,
+        accel: 8.8,
+        agility: 7.6,
+        footwork: 7.3,
+        decel: 8.0,
+        balance: 8.4,
+        grip: 8.1,
+        leverage: 8.3,
+        impact: 9.7,
+        recovery: 8.2,
+        anticipation: 8.2,
+        vision: 7.6,
+      };
+    }
+    return {
+      kind: "DEF",
+      mass: 96,
+      speed: 9.0,
+      accel: 9.6,
+      agility: 9.0,
+      footwork: 8.8,
+      decel: 8.9,
+      balance: 7.8,
+      grip: 7.9,
+      leverage: 7.7,
+      impact: 8.0,
+      recovery: 9.2,
+      anticipation: 8.4,
+      vision: 8.2,
+    };
+  }
+
+  class RingBuffer {
+    constructor(capacity) {
+      this.cap = capacity;
+      this.buf = new Array(capacity);
+      this.head = 0;
+      this.size = 0;
+    }
+    push(item) {
+      this.buf[this.head] = item;
+      this.head = (this.head + 1) % this.cap;
+      this.size = Math.min(this.size + 1, this.cap);
+    }
+    findWithin(windowStart, windowEnd, predicate) {
+      for (let i = 0; i < this.size; i++) {
+        const idx = (this.head - 1 - i + this.cap) % this.cap;
+        const it = this.buf[idx];
+        if (!it) continue;
+        if (it.t < windowStart) break;
+        if (it.t <= windowEnd && predicate(it)) return it;
+      }
+      return null;
+    }
+  }
+
+  class PhysicsBody {
+    constructor(pos, radius, mass) {
+      this.pos = { ...pos };
+      this.prevPos = { ...pos };
+      this.vel = v2(0, 0);
+      this.force = v2(0, 0);
+      this.radius = radius;
+      this.mass = mass;
+      this.facing = v2(0, -1);
+    }
+    savePrev() {
+      this.prevPos.x = this.pos.x;
+      this.prevPos.y = this.pos.y;
+    }
+    applyForce(f) {
+      this.force.x += f.x;
+      this.force.y += f.y;
+    }
+    integrate(dt) {
+      const ax = this.force.x / this.mass;
+      const ay = this.force.y / this.mass;
+      this.vel.x += ax * dt;
+      this.vel.y += ay * dt;
+      this.pos.x += this.vel.x * dt;
+      this.pos.y += this.vel.y * dt;
+      this.force.x = 0;
+      this.force.y = 0;
+      const spd = vLen(this.vel);
+      if (spd > 0.001) this.facing = vNorm(this.vel);
+    }
+  }
+
+  class AttributeSheet {
+    constructor(stats) { this.stats = stats; }
+    get s() { return this.stats; }
+  }
+
+  class Momentum {
+    constructor() {
+      this.value = 0;
+      this.cap = 100;
+      this.gen = 0;
+      this.spent = 0;
+    }
+    add(amount) {
+      const before = this.value;
+      this.value = clamp(this.value + amount, -this.cap, this.cap);
+      if (amount > 0) this.gen += (this.value - before);
+    }
+    spend(amount) {
+      const a = Math.max(0, amount);
+      const before = this.value;
+      this.value = clamp(this.value - a, -this.cap, this.cap);
+      this.spent += Math.max(0, before - this.value);
+    }
+    tick(dt, fatigue01) {
+      const decay = lerp(1.1, 2.1, fatigue01);
+      this.value *= Math.exp(-decay * dt);
+      this.cap = clamp(100 - fatigue01 * 35, 55, 100);
+      this.value = clamp(this.value, -this.cap, this.cap);
+    }
+  }
+
+  class InputHandler {
+    constructor(mapping) {
+      this.map = mapping;
+      this.buffer = new RingBuffer(72);
+      this.latestDir = v2(0, 0);
+      this.latestSprint = false;
+    }
+    sample(t, keys) {
+      const dir = v2(
+        (keys.has(this.map.right) ? 1 : 0) - (keys.has(this.map.left) ? 1 : 0),
+        (keys.has(this.map.down) ? 1 : 0) - (keys.has(this.map.up) ? 1 : 0),
+      );
+      this.latestDir = vLen(dir) > 0 ? vNorm(dir) : v2(0, 0);
+      this.latestSprint = keys.has(this.map.sprint);
+
+      for (const [action, code] of Object.entries(this.map.actions)) {
+        if (keys.has(code)) {
+          keys.delete(code);
+          this.buffer.push({ t, type: "ACTION", action });
+        }
+      }
+      if (keys.has(this.map.breakDrag)) {
+        keys.delete(this.map.breakDrag);
+        this.buffer.push({ t, type: "ACTION", action: "BREAK" });
+      }
+    }
+  }
+
+  class RenderState {
+    constructor(primary, secondary) {
+      this.primary = primary;
+      this.secondary = secondary;
+      this.squash = 0;
+      this.lean = 0;
+      this.flash = 0;
+      this.telegraph = null;
+      this.animT = 0;
+    }
+    tick(dt) {
+      this.squash *= Math.exp(-10 * dt);
+      this.lean *= Math.exp(-10 * dt);
+      this.flash *= Math.exp(-7 * dt);
+      this.animT += dt;
+    }
+  }
+
+  class HFSM {
+    constructor() {
+      this.main = "LOCO";
+      this.sub = "IDLE";
+    }
+    set(main, sub) { this.main = main; this.sub = sub; }
+  }
+
+  class Entity {
+    constructor(name, body, attrs, input, momentum, render, fsm) {
+      this.name = name;
+      this.body = body;
+      this.attrs = attrs;
+      this.input = input;
+      this.momentum = momentum;
+      this.render = render;
+      this.fsm = fsm;
+
+      this.stamina = 100;
+      this.fatigue = 0;
+      this.stun = 0;
+
+      this.specialCD = { TRUCK: 0, JUKE: 0, SPIN: 0 };
+      this.lastSpecial = null;
+    }
+    fatigue01() { return clamp(this.fatigue / 100, 0, 1); }
+    stamina01() { return clamp(this.stamina / 100, 0, 1); }
+  }
+
+  class Noise1D {
+    constructor(seed = 777) { this.seed = seed >>> 0; }
+    _hash(n) {
+      let x = (n ^ this.seed) >>> 0;
+      x ^= x << 13; x >>>= 0;
+      x ^= x >> 17; x >>>= 0;
+      x ^= x << 5;  x >>>= 0;
+      return x >>> 0;
+    }
+    _rand01(n) { return (this._hash(n) % 100000) / 100000; }
+    smooth(t) {
+      const i0 = Math.floor(t);
+      const i1 = i0 + 1;
+      const f = t - i0;
+      const u = f * f * (3 - 2 * f);
+      return lerp(this._rand01(i0), this._rand01(i1), u) * 2 - 1;
+    }
+  }
+
+  class Camera {
+    constructor() {
+      this.pos = v2(FIELD.worldW / 2, FIELD.startY);
+      this.vel = v2(0, 0);
+      this.zoom = 6.2;
+      this.zoomVel = 0;
+      this.trauma = 0;
+      this.noise = new Noise1D(999);
+      this.shake = { x: 0, y: 0, r: 0 };
+    }
+    addTrauma(a) { this.trauma = clamp(this.trauma + a, 0, 1); }
+    tick(dt, targetPos, targetZoom) {
+      const k = 16, c = 6;
+      const d = vSub(targetPos, this.pos);
+      this.vel.x += (d.x * k - this.vel.x * c) * dt;
+      this.vel.y += (d.y * k - this.vel.y * c) * dt;
+      this.pos.x += this.vel.x * dt;
+      this.pos.y += this.vel.y * dt;
+
+      const kz = 18, cz = 7;
+      const dz = targetZoom - this.zoom;
+      this.zoomVel += (dz * kz - this.zoomVel * cz) * dt;
+      this.zoom += this.zoomVel * dt;
+
+      this.trauma = Math.max(0, this.trauma - 1.6 * dt);
+      const tr = this.trauma * this.trauma;
+      const t = performance.now() / 1000;
+      this.shake.x = this.noise.smooth(t * 9.1) * tr * 0.55;
+      this.shake.y = this.noise.smooth(t * 8.3 + 10) * tr * 0.55;
+      this.shake.r = this.noise.smooth(t * 6.7 + 33) * tr * 0.022;
+    }
+  }
+
+  class SpringJoint {
+    constructor(a, b, restLen, stiffness, damping, breakForce) {
+      this.a = a;
+      this.b = b;
+      this.rest = restLen;
+      this.k = stiffness;
+      this.d = damping;
+      this.breakForce = breakForce;
+      this.active = true;
+    }
+    apply(dt) {
+      if (!this.active) return;
+      const delta = vSub(this.b.pos, this.a.pos);
+      const dist = vLen(delta) || 1;
+      const n = vMul(delta, 1 / dist);
+
+      const x = dist - this.rest;
+      const relVel = vSub(this.b.vel, this.a.vel);
+      const damp = vDot(relVel, n);
+
+      const forceMag = (-this.k * x) - (this.d * damp);
+      if (Math.abs(forceMag) > this.breakForce) { this.active = false; return; }
+
+      const force = vMul(n, forceMag);
+      this.a.applyForce(vMul(force, -1));
+      this.b.applyForce(force);
+    }
+  }
+
+  class Encounter {
+    constructor() {
+      this.active = false;
+      this.stage = "NONE";
+      this.startedAt = 0;
+      this.telegraphUntil = 0;
+      this.windowStart = 0;
+      this.windowEnd = 0;
+      this.resolveAt = 0;
+    }
+    start(simT) {
+      this.active = true;
+      this.stage = "TELEGRAPH";
+      this.startedAt = simT;
+      this.telegraphUntil = simT + 0.24;
+      this.windowStart = simT + 0.10;
+      this.windowEnd = simT + 0.44;
+      this.resolveAt = simT + 0.55;
+    }
+    end() {
+      this.active = false;
+      this.stage = "NONE";
+    }
+  }
+
+  function rpsBonus(offMove, defMove) {
+    const key = `${offMove}_${defMove}`;
+    const table = {
+      TRUCK_DIVE: -0.16, TRUCK_WRAP: +0.06, TRUCK_HIT: -0.12, TRUCK_CONTAIN: +0.10,
+      JUKE_CONTAIN: -0.16, JUKE_DIVE: +0.24, JUKE_WRAP: +0.06, JUKE_HIT: +0.08,
+      SPIN_WRAP: -0.12, SPIN_DIVE: +0.14, SPIN_HIT: +0.18, SPIN_CONTAIN: +0.04,
+    };
+    return table[key] ?? 0;
+  }
+
+  function timingQuality01(phase01) {
+    const d = Math.abs(phase01 - 0.5);
+    if (d < 0.07) return 1.0;
+    if (d < 0.14) return 0.72;
+    if (d < 0.22) return 0.45;
+    return 0.20;
+  }
+
+  class AISystem {
+    constructor(def, off) {
+      this.def = def;
+      this.off = off;
+      this.think = 0;
+      this.target = v2(off.body.pos.x, off.body.pos.y);
+      this.intent = DefMove.WRAP;
+      this.commitTimer = 0;
+    }
+
+    _pickIntent(dist) {
+      const s = this.def.attrs.s;
+      const biasSure = (s.grip + s.balance) / 20;
+      const biasHit = s.impact / 10;
+      const biasSpeed = s.speed / 10;
+
+      const offMove = this.off.lastSpecial ?? OffMove.NONE;
+
+      if (offMove === OffMove.SPIN) return (Math.random() < (0.58 + biasSure * 0.12)) ? DefMove.WRAP : DefMove.CONTAIN;
+      if (offMove === OffMove.TRUCK) return (Math.random() < (0.55 + biasSpeed * 0.12)) ? DefMove.DIVE : DefMove.HIT;
+      if (dist > 6.0) return (Math.random() < (0.55 + biasSpeed * 0.15)) ? DefMove.DIVE : DefMove.CONTAIN;
+      return (Math.random() < (0.62 + biasSure * 0.12)) ? DefMove.WRAP : (Math.random() < (0.55 + biasHit * 0.10) ? DefMove.HIT : DefMove.CONTAIN);
+    }
+
+    tick(simT, dt, encounterActive, jointActive) {
+      if (encounterActive || jointActive) {
+        this.def.input.latestDir = v2(0, 0);
+        this.def.input.latestSprint = false;
+        return;
+      }
+
+      this.commitTimer = Math.max(0, this.commitTimer - dt);
+
+      const dpos = this.def.body.pos;
+      const opos = this.off.body.pos;
+      const ovel = this.off.body.vel;
+
+      const s = this.def.attrs.s;
+      const react = clamp(0.09 + (1 - s.anticipation / 10) * 0.18 + this.def.fatigue01() * 0.12, 0.08, 0.32);
+      this.think -= dt;
+
+      const delta = vSub(opos, dpos);
+      const dist = vLen(delta);
+
+      if (this.think <= 0) {
+        this.think = react;
+
+        const k = clamp(dist / 8.5, 0.20, 0.70);
+        const future = vAdd(opos, vMul(ovel, k));
+
+        // bias to take inside leverage (keep runner from cutting back to center)
+        const centerX = FIELD.worldW / 2;
+        const lanePull = clamp(0.12 + (s.balance / 10) * 0.12, 0.10, 0.30);
+        const laneX = lerp(future.x, lerp(future.x, centerX, 0.25), lanePull);
+
+        this.target = {
+          x: clamp(laneX, FIELD.x0 + 4, FIELD.x1 - 4),
+          y: clamp(future.y + 1.0, FIELD.y0 + 4, FIELD.y1 - 4),
+        };
+
+        this.intent = this._pickIntent(dist);
+
+        // occasional “commit” lunges if close and aligned
+        const align = vDot(this.def.body.facing, vNorm(vSub(opos, dpos)));
+        if (dist < 8.0 && align > 0.65 && this.def.stamina > 18 && Math.random() < 0.30) {
+          this.commitTimer = 0.28;
+        }
+      }
+
+      const toT = vSub(this.target, dpos);
+      const d = vLen(toT);
+      const dir = d > 0.001 ? vMul(toT, 1 / d) : v2(0, 0);
+
+      const slowRadius = 6.8;
+      const arrive = d < slowRadius ? (d / slowRadius) : 1;
+      let steer = vMul(dir, arrive);
+
+      const staminaGate = this.def.stamina > 15;
+      const sprint = staminaGate && (d > 7.0 || (dpos.y - opos.y) > 1.0);
+
+      // commit lunge: overshoot forward
+      if (this.commitTimer > 0) {
+        steer = vMul(dir, 1.0);
+      }
+
+      this.def.input.latestDir = steer;
+      this.def.input.latestSprint = sprint;
+    }
+  }
+
+  // ---- Sprite rendering (pixel-ish procedural sprites) ----
+
+  function makeSpriteCache() {
+    const c = document.createElement("canvas");
+    c.width = 48;
+    c.height = 48;
+    const sctx = c.getContext("2d");
+    sctx.imageSmoothingEnabled = false;
+    return { canvas: c, ctx: sctx, lastKey: "" };
+  }
+
+  function drawPlayerSprite(cache, opts) {
+    const {
+      primary, secondary, frame01, facing, isOffense, telegraph, flash01
+    } = opts;
+
+    const key = `${primary}|${secondary}|${frame01.toFixed(2)}|${facing.x.toFixed(2)},${facing.y.toFixed(2)}|${telegraph ?? ""}|${flash01.toFixed(2)}|${isOffense ? "O" : "D"}`;
+    if (cache.lastKey === key) return cache.canvas;
+
+    cache.lastKey = key;
+    const c = cache.canvas;
+    const s = cache.ctx;
+    s.clearRect(0, 0, c.width, c.height);
+
+    // background transparent
+
+    // direction angle
+    const ang = Math.atan2(facing.y, facing.x);
+    const cx = 24, cy = 26;
+
+    s.save();
+    s.translate(cx, cy);
+    s.rotate(ang + Math.PI / 2); // face "up" in sprite space
+    s.translate(-cx, -cy);
+
+    // run cycle
+    const swing = Math.sin(frame01 * Math.PI * 2);
+    const swing2 = Math.sin(frame01 * Math.PI * 2 + Math.PI);
+
+    // palette
+    const helmet = "#d1d5db";
+    const pants = "#111827";
+    const skin = "#f5caa8";
+
+    const jersey = primary;
+    const accent = secondary;
+
+    // shadow
+    s.globalAlpha = 0.45;
+    s.fillStyle = "rgba(0,0,0,.35)";
+    s.fillRect(16, 36, 16, 6);
+    s.globalAlpha = 1;
+
+    // legs (pixel blocks)
+    const legA = 22 + swing * 3;
+    const legB = 22 + swing2 * 3;
+
+    s.fillStyle = pants;
+    pixRect(s, 20, 30, 4, 10, 2, legA);
+    pixRect(s, 24, 30, 4, 10, 2, legB);
+
+    // cleats
+    s.fillStyle = "#0b0f14";
+    pixRect(s, 19, 39, 6, 3, 0, legA);
+    pixRect(s, 23, 39, 6, 3, 0, legB);
+
+    // torso
+    s.fillStyle = jersey;
+    s.fillRect(16, 18, 16, 14);
+
+    // shoulder pads
+    s.fillStyle = accent;
+    s.fillRect(14, 18, 4, 6);
+    s.fillRect(30, 18, 4, 6);
+
+    // arms
+    s.fillStyle = skin;
+    const armSwing = swing * 2.5;
+    pixRect(s, 13, 20, 4, 10, 3, -armSwing);
+    pixRect(s, 31, 20, 4, 10, 3, armSwing);
+
+    // helmet
+    s.fillStyle = helmet;
+    s.fillRect(18, 10, 12, 10);
+
+    // facemask
+    s.fillStyle = "#6b7280";
+    s.fillRect(18, 16, 12, 2);
+    s.fillRect(20, 14, 8, 2);
+
+    // visor highlight
+    s.fillStyle = "rgba(255,255,255,.25)";
+    s.fillRect(19, 11, 4, 2);
+
+    // number stripe
+    s.fillStyle = "rgba(255,255,255,.18)";
+    s.fillRect(20, 22, 8, 6);
+
+    // ball (offense)
+    if (isOffense) {
+      s.fillStyle = "#f59e0b";
+      s.fillRect(30, 24, 4, 3);
+      s.fillStyle = "rgba(0,0,0,.35)";
+      s.fillRect(31, 25, 2, 1);
+    }
+
+    // flash ring
+    if (flash01 > 0.02) {
+      s.globalAlpha = 0.8 * flash01;
+      s.strokeStyle = "rgba(255,255,255,.9)";
+      s.lineWidth = 2;
+      s.beginPath();
+      s.arc(cx, cy, 16, 0, Math.PI * 2);
+      s.stroke();
+      s.globalAlpha = 1;
+    }
+
+    s.restore();
+
+    // telegraph tag (not rotated; readable)
+    if (telegraph) {
+      s.save();
+      s.globalAlpha = 0.9;
+      s.fillStyle = "rgba(0,0,0,.45)";
+      s.fillRect(6, 2, 36, 10);
+      s.fillStyle = "rgba(255,255,255,.92)";
+      s.font = "700 8px system-ui";
+      s.textAlign = "center";
+      s.fillText(telegraph, 24, 10);
+      s.restore();
+    }
+
+    return cache.canvas;
+  }
+
+  function pixRect(sctx, x, y, w, h, pivotY, rotPx) {
+    // quick pixel-ish limb rotate around a point; minimal but looks “spritey”
+    sctx.save();
+    sctx.translate(x + w / 2, y + pivotY);
+    sctx.rotate((rotPx / 30) * Math.PI);
+    sctx.translate(-(x + w / 2), -(y + pivotY));
+    sctx.fillRect(x, y, w, h);
+    sctx.restore();
+  }
+
+  // ---- Game ----
+
+  class Game {
+    constructor() {
+      this.mode = Mode.MENU;
+      this.prevMode = Mode.MENU;
+      this.twoP = false;
+      this.debug = false;
+
+      this.offArch = Archetype.OFF_HYBRID;
+      this.defArch = Archetype.DEF_SURE;
+
+      this.simT = 0;
+      this.acc = 0;
+      this.lastFrameT = now();
+
+      this.camera = new Camera();
+      this.encounter = new Encounter();
+      this.joint = null;
+
+      this.timeScale = 1.0;
+
+      this.lastOutcome = null;
+      this.offStartY = FIELD.startY;
+
+      this.metrics = {
+        time: 0,
+        yac: 0,
+        contactY: null,
+        missedTackles: 0,
+        encounters: 0,
+      };
+
+      this.spriteOff = makeSpriteCache();
+      this.spriteDef = makeSpriteCache();
+
+      this._buildEntities();
+      this.ai = new AISystem(this.def, this.off);
+    }
+
+    _buildEntities() {
+      const o = statsFor(this.offArch);
+      const d = statsFor(this.defArch);
+
+      this.off = new Entity(
+        "OFF",
+        new PhysicsBody(v2(FIELD.worldW / 2, FIELD.startY), 1.15, o.mass),
+        new AttributeSheet(o),
+        new InputHandler({
+          up: "KeyW", down: "KeyS", left: "KeyA", right: "KeyD", sprint: "ShiftLeft",
+          breakDrag: "Space",
+          actions: { TRUCK: "Digit1", JUKE: "Digit2", SPIN: "Digit3" }
+        }),
+        new Momentum(),
+        new RenderState("#7dd3fc", "#22c55e"),
+        new HFSM(),
+      );
+
+      this.def = new Entity(
+        "DEF",
+        new PhysicsBody(v2(FIELD.worldW / 2, FIELD.startY - 18), 1.15, d.mass),
+        new AttributeSheet(d),
+        new InputHandler({
+          up: "KeyI", down: "KeyK", left: "KeyJ", right: "KeyL", sprint: "ShiftRight",
+          breakDrag: "Numpad0",
+          actions: { WRAP: "Digit7", DIVE: "Digit8", HIT: "Digit9", CONTAIN: "Digit0" }
+        }),
+        new Momentum(),
+        new RenderState("#fb7185", "#a855f7"),
+        new HFSM(),
+      );
+    }
+
+    resetPlay() {
+      this.simT = 0;
+      this.acc = 0;
+      this.timeScale = 1.0;
+      this.lastOutcome = null;
+      this.joint = null;
+      this.encounter.end();
+
+      this.metrics = { time: 0, yac: 0, contactY: null, missedTackles: 0, encounters: 0 };
+
+      this._buildEntities();
+      this.ai = new AISystem(this.def, this.off);
+
+      // Ensure start spacing so it doesn't instantly collide.
+      this.off.body.pos = v2(FIELD.worldW / 2, FIELD.startY);
+      this.def.body.pos = v2(FIELD.worldW / 2 + 6, FIELD.startY - 22);
+
+      this.offStartY = this.off.body.pos.y;
+
+      this.camera.pos = v2(FIELD.worldW / 2, FIELD.startY - 10);
+      this.camera.vel = v2(0, 0);
+      this.camera.zoom = 6.0;
+
+      this.mode = Mode.PLAY;
+    }
+
+    togglePause() {
+      if (this.mode === Mode.MENU) return;
+      if (this.mode === Mode.PAUSE) this.mode = this.prevMode;
+      else { this.prevMode = this.mode; this.mode = Mode.PAUSE; }
+    }
+
+    frame() {
+      const t = now();
+      let frameTime = clamp(t - this.lastFrameT, 0, MAX_FRAME);
+      this.lastFrameT = t;
+
+      this._handleGlobalInput();
+
+      if (this.mode === Mode.PAUSE) {
+        this.render(this.acc / FIXED_DT);
+        requestAnimationFrame(() => this.frame());
+        return;
+      }
+
+      this.acc += frameTime * this.timeScale;
+
+      while (this.acc >= FIXED_DT) {
+        this.simT += FIXED_DT;
+        this.stepFixed(FIXED_DT);
+        this.acc -= FIXED_DT;
+      }
+
+      const alpha = clamp(this.acc / FIXED_DT, 0, 1);
+      this.render(alpha);
+      requestAnimationFrame(() => this.frame());
+    }
+
+    _handleGlobalInput() {
+      if (KEYS.has("Escape")) { KEYS.delete("Escape"); this.togglePause(); }
+      if (KEYS.has("KeyV")) { KEYS.delete("KeyV"); this.debug = !this.debug; }
+      if (KEYS.has("KeyM")) { KEYS.delete("KeyM"); this.twoP = !this.twoP; }
+
+      if (this.mode === Mode.MENU) {
+        if (KEYS.has("Enter")) { KEYS.delete("Enter"); this.resetPlay(); }
+        return;
+      }
+
+      if (KEYS.has("KeyR")) { KEYS.delete("KeyR"); this.resetPlay(); }
+      if (this.mode === Mode.POST && KEYS.has("Enter")) { KEYS.delete("Enter"); this.resetPlay(); }
+    }
+
+    stepFixed(dt) {
+      if (this.mode === Mode.MENU || this.mode === Mode.POST) return;
+
+      this.metrics.time += dt;
+
+      this.off.body.savePrev();
+      this.def.body.savePrev();
+
+      this.off.input.sample(this.simT, KEYS);
+      if (this.twoP) this.def.input.sample(this.simT, KEYS);
+
+      this.ai.tick(this.simT, dt, this.encounter.active, !!(this.joint && this.joint.active));
+
+      this._tickFSM(dt);
+      this._applySpecials(dt);
+      this._physicsStep(dt);
+      this._encounterStep(dt);
+      this._rules(dt);
+
+      this.off.render.tick(dt);
+      this.def.render.tick(dt);
+
+      this.off.momentum.tick(dt, this.off.fatigue01());
+      this.def.momentum.tick(dt, this.def.fatigue01());
+
+      const mid = vMul(vAdd(this.off.body.pos, this.def.body.pos), 0.5);
+      const dist = vLen(vSub(this.off.body.pos, this.def.body.pos));
+      const z = clamp(lerp(7.2, 5.2, clamp(dist / 10, 0, 1)), 4.9, 7.8);
+      const tight = this.encounter.active ? 0.92 : 0;
+      this.camera.tick(dt, mid, lerp(z, z * 0.92, tight));
+    }
+
+    _tickFSM(dt) {
+      for (const ent of [this.off, this.def]) {
+        ent.stun = Math.max(0, ent.stun - dt);
+        ent.fatigue = clamp(ent.fatigue - 4.2 * dt, 0, 100);
+
+        for (const k of Object.keys(ent.specialCD)) ent.specialCD[k] = Math.max(0, ent.specialCD[k] - dt);
+
+        if (ent.stun > 0) {
+          ent.fsm.set("INTERACTIVE", "STUN");
+          continue;
+        }
+
+        if (this.encounter.active) {
+          ent.fsm.set("INTERACTIVE", "FOCUS");
+          continue;
+        }
+
+        if (this.joint && this.joint.active) {
+          ent.fsm.set("INTERACTIVE", "GRAPPLE");
+          continue;
+        }
+
+        const dir = ent.input.latestDir;
+        const has = vLen(dir) > 0.01;
+        const spd = vLen(ent.body.vel);
+
+        if (!has) {
+          ent.fsm.set("LOCO", spd > 0.35 ? "TOP" : "IDLE");
+          continue;
+        }
+
+        const vel = ent.body.vel;
+        const ang = (spd > 0.4) ? angleBetween(vel, dir) : 0;
+        const inCut = spd > 2.0 && ang > (Math.PI / 4);
+
+        ent.fsm.set("LOCO", inCut ? "CUT" : (spd > 0.5 ? "TOP" : "ACCEL"));
+
+        if (ent.fsm.sub === "CUT" && ent.name === "OFF") {
+          const cost = lerp(1.6, 3.0, clamp(ang / Math.PI, 0, 1)) * (spd / 4);
+          const composure = clamp(ent.attrs.s.composure / 10, 0, 1);
+          ent.momentum.spend(cost * (1 - composure * 0.35));
+          ent.render.squash = Math.min(1, ent.render.squash + 0.45);
+          ent.render.lean = clamp(ent.render.lean + (dir.x * 0.5), -0.6, 0.6);
+        }
+      }
+    }
+
+    _applySpecials(dt) {
+      // Apply offense specials during run (not only encounter). This is what makes it “not just collide and done”.
+      const o = this.off.attrs.s;
+      const d = this.def.attrs.s;
+
+      const use = (action) => {
+        const cd = this.off.specialCD[action];
+        if (cd > 0) return false;
+
+        const mom = this.off.momentum.value;
+        const cost = action === "TRUCK" ? 12 : (action === "SPIN" ? 10 : 8);
+        if (mom < -40) return false; // too tilted
+
+        this.off.momentum.spend(cost);
+        this.off.lastSpecial = action;
+        this.off.specialCD[action] = action === "TRUCK" ? 0.65 : 0.45;
+
+        const facing = this.off.body.facing;
+        const right = v2(facing.y, -facing.x);
+
+        if (action === "JUKE") {
+          // quick lateral pop based on deception + footwork
+          const pop = (o.footwork / 10) * 7.5 + (o.deception / 10) * 3.0;
+          const dir = vMul(right, (Math.random() < 0.5 ? -1 : 1));
+          this.off.body.vel = vAdd(this.off.body.vel, vMul(dir, pop));
+          this.off.render.flash = 1;
+          this.off.render.squash = Math.min(1, this.off.render.squash + 0.6);
+          this.off.fatigue = clamp(this.off.fatigue + 4, 0, 100);
+          this.off.momentum.add(4);
+          return true;
+        }
+
+        if (action === "SPIN") {
+          // slight speed + angle change, reduces tackle stickiness later
+          const burst = (o.agility / 10) * 6.0 + (o.footwork / 10) * 3.5;
+          this.off.body.vel = vAdd(this.off.body.vel, vMul(facing, burst));
+          this.off.body.vel = vAdd(this.off.body.vel, vMul(right, (Math.random() * 2 - 1) * 2.5));
+          this.off.render.flash = 1;
+          this.off.render.squash = Math.min(1, this.off.render.squash + 0.5);
+          this.off.fatigue = clamp(this.off.fatigue + 5, 0, 100);
+          this.off.momentum.add(3);
+          return true;
+        }
+
+        // TRUCK: forward impulse + “heavier” feel; defender more likely to bounce or go drag.
+        const truck = (o.power / 10) * 9.0 + (o.leverage / 10) * 4.0;
+        this.off.body.vel = vAdd(this.off.body.vel, vMul(facing, truck));
+        this.off.render.flash = 1;
+        this.off.render.squash = Math.min(1, this.off.render.squash + 0.55);
+        this.off.fatigue = clamp(this.off.fatigue + 6, 0, 100);
+        this.off.momentum.add(2);
+        return true;
+      };
+
+      const recent = this.off.input.buffer.findWithin(this.simT - 0.06, this.simT, (it) =>
+        it.type === "ACTION" && (it.action === "TRUCK" || it.action === "JUKE" || it.action === "SPIN")
+      );
+      if (!this.encounter.active && !(this.joint && this.joint.active) && recent) {
+        use(recent.action);
+      }
+
+      // Drag break (Space) mini: spam to snap joint.
+      if (this.joint && this.joint.active) {
+        const breaker = this.off.input.buffer.findWithin(this.simT - 0.20, this.simT, (it) => it.type === "ACTION" && it.action === "BREAK");
+        if (breaker) {
+          const bt = o.breakTackle / 10;
+          const grip = d.grip / 10;
+          const mom01 = clamp(this.off.momentum.value / 100, -1, 1);
+          const chance = clamp(0.18 + bt * 0.46 + mom01 * 0.12 - grip * 0.26, 0.05, 0.85);
+          if (Math.random() < chance) {
+            this.joint.active = false;
+            this.metrics.missedTackles += 1;
+            this.off.momentum.add(10);
+            this.def.fatigue = clamp(this.def.fatigue + 10, 0, 100);
+            this.camera.addTrauma(0.16);
+            this.off.render.flash = 1;
+          } else {
+            this.def.momentum.add(6);
+            this.off.fatigue = clamp(this.off.fatigue + 3, 0, 100);
+          }
+        }
+      }
+    }
+
+    _physicsStep(dt) {
+      this._applyLocomotionForces(this.off, dt, true);
+      this._applyLocomotionForces(this.def, dt, false);
+
+      if (this.joint && this.joint.active) this.joint.apply(dt);
+
+      this.off.body.integrate(dt);
+      this.def.body.integrate(dt);
+
+      this._resolveFieldBounds(this.off);
+      this._resolveFieldBounds(this.def);
+    }
+
+    _applyLocomotionForces(ent, dt, isOffense) {
+      const s = ent.attrs.s;
+      const dir = ent.input.latestDir;
+
+      const fatigue01 = ent.fatigue01();
+      const stamina01 = ent.stamina01();
+
+      const sprinting = ent.input.latestSprint && ent.stamina > 10 && ent.fsm.main === "LOCO";
+      const sprintMul = sprinting ? 1.16 : 1.0;
+
+      const maxSpeed = (s.speed * sprintMul) * lerp(1.0, 0.86, fatigue01);
+      const accel = (s.accel * sprintMul) * lerp(1.0, 0.88, fatigue01);
+
+      const baseInputForce = 86;
+      const forceMag = baseInputForce * accel * lerp(0.72, 1.0, stamina01);
+
+      const desiredVel = vMul(dir, maxSpeed);
+      const vel = ent.body.vel;
+      const dv = vSub(desiredVel, vel);
+
+      const aLatMax = (s.agility * 9.2 + s.footwork * 5.0) * lerp(1.0, 0.86, fatigue01);
+      const dvMax = aLatMax * dt;
+      const dvClamped = vClampLen(dv, dvMax);
+
+      const inputForce = vMul(dvClamped, ent.body.mass / dt);
+      ent.body.applyForce(vClampLen(inputForce, forceMag * ent.body.mass));
+
+      const spd = vLen(vel);
+      const baseFric = 9.6 + (s.decel ?? s.decel) * 0.6;
+      const cutFric = 22.5 + (s.decel ?? s.decel) * 1.2;
+      const fric = (ent.fsm.sub === "CUT") ? cutFric : baseFric;
+
+      ent.body.applyForce(vMul(vel, -fric * ent.body.mass));
+
+      const drain = sprinting ? (6.2 + spd * 0.6) : (2.6 + spd * 0.25);
+      ent.stamina = clamp(ent.stamina - drain * dt, 0, 100);
+      if (!sprinting && spd < 1.2) ent.stamina = clamp(ent.stamina + 10.5 * dt, 0, 100);
+
+      if (ent.fsm.sub === "CUT") ent.fatigue = clamp(ent.fatigue + 2.1 * dt, 0, 100);
+
+      // Offense momentum rewards “downhill” (upfield) speed maintenance
+      if (isOffense) {
+        const up = v2(0, -1);
+        const downhill = clamp(vDot(vNorm(vel), up), 0, 1);
+        const gen = downhill * (spd / 8) * 0.55;
+        ent.momentum.add(gen * dt * 8);
+      }
+    }
+
+    _resolveFieldBounds(ent) {
+      const r = ent.body.radius;
+      const xMin = FIELD.x0 + r + FIELD.sidelinePad;
+      const xMax = FIELD.x1 - r - FIELD.sidelinePad;
+      const yMin = FIELD.y0 + r + 2.0;
+      const yMax = FIELD.y1 - r - 2.0;
+
+      const p = ent.body.pos;
+      if (p.x < xMin) { p.x = xMin; ent.body.vel.x *= -0.15; }
+      if (p.x > xMax) { p.x = xMax; ent.body.vel.x *= -0.15; }
+      if (p.y < yMin) { p.y = yMin; ent.body.vel.y *= -0.15; }
+      if (p.y > yMax) { p.y = yMax; ent.body.vel.y *= -0.15; }
+    }
+
+    _encounterStep(dt) {
+      // Trigger encounter only when close AND both are roughly facing.
+      const delta = vSub(this.off.body.pos, this.def.body.pos);
+      const dist = vLen(delta);
+
+      const facingCone = Math.PI / 3;
+      const offFacing = vDot(this.off.body.facing, vNorm(vSub(this.def.body.pos, this.off.body.pos)));
+      const defFacing = vDot(this.def.body.facing, vNorm(vSub(this.off.body.pos, this.def.body.pos)));
+      const facingOK = (Math.acos(clamp(offFacing, -1, 1)) < facingCone) && (Math.acos(clamp(defFacing, -1, 1)) < facingCone);
+
+      const tackleDist = 2.3;
+
+      if (!this.encounter.active && !(this.joint && this.joint.active) && dist < tackleDist && facingOK) {
+        this.encounter.start(this.simT);
+        this.metrics.encounters += 1;
+        this.timeScale = 0.22;
+        this.off.render.flash = 1;
+        this.def.render.flash = 1;
+        this.camera.addTrauma(0.10);
+      }
+
+      if (!this.encounter.active) return;
+
+      const E = this.encounter;
+
+      const offMove = this._readOffMove(E);
+      const defMove = this._readDefMove(E, dist);
+
+      this.off.render.telegraph = offMove !== OffMove.NONE ? offMove : null;
+      this.def.render.telegraph = defMove !== DefMove.NONE ? defMove : null;
+
+      if (this.simT < E.telegraphUntil) return;
+
+      if (E.stage === "TELEGRAPH") E.stage = "WINDOW";
+      if (this.simT >= E.windowEnd || this.simT >= E.resolveAt) E.stage = "RESOLVE";
+      if (E.stage !== "RESOLVE") return;
+
+      const res = this._resolveEncounter(E, offMove, defMove, dist);
+
+      E.end();
+      this.timeScale = 1.0;
+      this.off.render.telegraph = null;
+      this.def.render.telegraph = null;
+
+      this._applyEncounterResult(res);
+    }
+
+    _readOffMove(E) {
+      const it = this.off.input.buffer.findWithin(E.windowStart - 0.08, E.windowEnd, (x) =>
+        x.type === "ACTION" && (x.action === "TRUCK" || x.action === "JUKE" || x.action === "SPIN")
+      );
+      if (!it) return OffMove.JUKE; // default
+      return it.action;
+    }
+
+    _readDefMove(E, dist) {
+      if (this.twoP) {
+        const it = this.def.input.buffer.findWithin(E.windowStart - 0.10, E.windowEnd, (x) =>
+          x.type === "ACTION" && (x.action === "WRAP" || x.action === "DIVE" || x.action === "HIT" || x.action === "CONTAIN")
+        );
+        return it ? it.action : DefMove.WRAP;
+      }
+      // AI intent maps to counters
+      return this.ai.intent ?? DefMove.WRAP;
+    }
+
+    _resolveEncounter(E, offMove, defMove, dist) {
+      const o = this.off.attrs.s;
+      const d = this.def.attrs.s;
+
+      const phase = clamp((this.simT - E.windowStart) / Math.max(0.0001, (E.windowEnd - E.windowStart)), 0, 1);
+      const timing = timingQuality01(phase);
+
+      const deception = clamp(o.deception / 10, 0, 1);
+      const ant = clamp(d.anticipation / 10, 0, 1);
+      const visionD = clamp(d.vision / 10, 0, 1);
+
+      const readPenalty = clamp((deception * 0.18) - (visionD * 0.12), -0.10, 0.12);
+      const windowBonus = lerp(0.92, 1.08, ant);
+
+      const offMom = clamp(this.off.momentum.value / 100, -1, 1);
+      const defMom = clamp(this.def.momentum.value / 100, -1, 1);
+
+      const oFat = 1 - this.off.fatigue01() * 0.18;
+      const dFat = 1 - this.def.fatigue01() * 0.18;
+
+      const offMoveStat = (
+        offMove === OffMove.TRUCK ? (o.power * 1.0 + o.leverage * 0.9 + o.balance * 0.7) :
+        offMove === OffMove.SPIN  ? (o.footwork * 1.0 + o.agility * 0.9 + o.deception * 0.6) :
+                                    (o.agility * 1.0 + o.footwork * 0.9 + o.deception * 0.8 + o.vision * 0.4)
+      ) / 10;
+
+      const defMoveStat = (
+        defMove === DefMove.WRAP ? (d.grip * 1.0 + d.balance * 0.9 + d.leverage * 0.8 + d.anticipation * 0.5) :
+        defMove === DefMove.DIVE ? (d.accel * 0.9 + d.speed * 0.7 + d.agility * 0.8 + d.anticipation * 0.6) :
+        defMove === DefMove.HIT  ? (d.impact * 1.0 + d.balance * 0.7 + d.leverage * 0.7) :
+                                   (d.agility * 0.9 + d.balance * 0.8 + d.anticipation * 0.8)
+      ) / 10;
+
+      // angle bonus: if defender is "behind" the runner, offense advantage
+      const toOff = vNorm(vSub(this.off.body.pos, this.def.body.pos));
+      const behind = clamp(vDot(this.def.body.facing, toOff), -1, 1); // higher = more aligned toward runner
+      const angleBonus = clamp(1 - Math.abs(behind), 0, 1);
+
+      const rps = rpsBonus(offMove, defMove);
+      const noise = (Math.random() * 0.14 - 0.07);
+
+      const offScore =
+        offMoveStat *
+        (0.92 + timing * 0.28) *
+        (1.0 + offMom * 0.18) *
+        (1.0 + angleBonus * 0.10) *
+        oFat;
+
+      const defScore =
+        defMoveStat *
+        windowBonus *
+        (1.0 + defMom * 0.12) *
+        (1.0 + readPenalty) *
+        dFat;
+
+      const delta = (offScore - defScore) + rps + noise;
+
+      if (delta > 0.26) return { outcome: Outcome.WHIFF, delta, offMove, defMove };
+      if (delta > 0.08) return { outcome: Outcome.GLANCE, delta, offMove, defMove };
+      if (delta > -0.10) return { outcome: Outcome.DRAG, delta, offMove, defMove };
+      return { outcome: Outcome.STOP, delta, offMove, defMove };
+    }
+
+    _applyEncounterResult(res) {
+      const o = this.off.attrs.s;
+      const d = this.def.attrs.s;
+
+      if (this.metrics.contactY == null) this.metrics.contactY = this.off.body.pos.y;
+
+      const toOff = vNorm(vSub(this.off.body.pos, this.def.body.pos));
+      const right = v2(toOff.y, -toOff.x);
+
+      if (res.outcome === Outcome.WHIFF) {
+        this.metrics.missedTackles += 1;
+        this.off.momentum.add(18);
+        this.def.momentum.add(-10);
+
+        this.def.stun = 0.30;
+        this.def.fsm.set("INTERACTIVE", "STUMBLE");
+        this.def.render.flash = 1;
+
+        this.off.body.vel = vAdd(this.off.body.vel, vMul(toOff, 7.5));
+        this.def.body.vel = vAdd(this.def.body.vel, vMul(toOff, -5.5));
+
+        this.def.fatigue = clamp(this.def.fatigue + 12, 0, 100);
+        this.camera.addTrauma(0.24);
+
+        this.lastOutcome = Outcome.WHIFF;
+        return;
+      }
+
+      if (res.outcome === Outcome.GLANCE) {
+        this.off.momentum.add(8);
+        this.def.momentum.add(6);
+
+        this.off.body.vel = vAdd(this.off.body.vel, vMul(toOff, 5.5));
+        this.off.body.vel = vAdd(this.off.body.vel, vMul(right, (Math.random() * 2 - 1) * 2.8));
+        this.def.body.vel = vAdd(this.def.body.vel, vMul(toOff, -4.5));
+
+        this.def.fatigue = clamp(this.def.fatigue + 8, 0, 100);
+        this.off.fatigue = clamp(this.off.fatigue + 5, 0, 100);
+
+        this.camera.addTrauma(0.18);
+
+        this.lastOutcome = Outcome.GLANCE;
+        return;
+      }
+
+      if (res.outcome === Outcome.DRAG) {
+        this.off.momentum.add(4);
+        this.def.momentum.add(8);
+
+        const grip = clamp(d.grip / 10, 0, 1);
+        const bt = clamp(o.breakTackle / 10, 0, 1);
+
+        const stiffness = lerp(250, 390, grip);
+        const damping = 28;
+        const rest = 1.75;
+        const breakForce = lerp(540, 980, grip) * (1 - bt * 0.18);
+
+        this.joint = new SpringJoint(this.off.body, this.def.body, rest, stiffness, damping, breakForce);
+        this.def.fsm.set("INTERACTIVE", "GRAPPLE");
+        this.off.fsm.set("INTERACTIVE", "GRAPPLE");
+
+        this.off.fatigue = clamp(this.off.fatigue + 8, 0, 100);
+        this.def.fatigue = clamp(this.def.fatigue + 10, 0, 100);
+
+        // snap together a bit
+        this.def.body.pos = vAdd(this.off.body.pos, vMul(toOff, -1.6));
+        this.def.body.vel = vAdd(this.def.body.vel, vMul(toOff, 1.2));
+
+        this.camera.addTrauma(0.22);
+        this.lastOutcome = Outcome.DRAG;
+        return;
+      }
+
+      // STOP
+      this.off.momentum.add(-12);
+      this.def.momentum.add(10);
+
+      this.off.stun = 0.42;
+      this.def.stun = 0.18;
+
+      // little fall-forward based on balance/power (YAC vibe)
+      const fall = (o.balance / 10) * 1.2 + (o.power / 10) * 0.9;
+      this.off.body.pos.y -= fall * 0.5;
+
+      this.camera.addTrauma(0.30);
+      this.lastOutcome = Outcome.STOP;
+      this._finish(Outcome.STOP);
+    }
+
+    _rules(dt) {
+      const off = this.off.body.pos;
+
+      // out of bounds (sidelines)
+      const xMin = FIELD.x0 + this.off.body.radius + FIELD.sidelinePad + 0.05;
+      const xMax = FIELD.x1 - this.off.body.radius - FIELD.sidelinePad - 0.05;
+      if (off.x <= xMin || off.x >= xMax) {
+        this.lastOutcome = Outcome.OUT;
+        this._finish(Outcome.OUT);
+        return;
+      }
+
+      // touchdown
+      if (off.y <= FIELD.endZoneY) {
+        this.lastOutcome = Outcome.TD;
+        this._finish(Outcome.TD);
+        return;
+      }
+
+      // if dragging, slow runner
+      if (this.joint && this.joint.active) {
+        const speedCost = 1.0 + (this.def.attrs.s.grip / 10) * 0.7;
+        this.off.body.vel = vMul(this.off.body.vel, Math.exp(-speedCost * dt));
+      }
+    }
+
+    _finish(outcome) {
+      if (this.mode === Mode.POST) return;
+      const contactY = this.metrics.contactY ?? this.off.body.pos.y;
+      this.metrics.yac = Math.max(0, mapYToYards(this.offStartY) - mapYToYards(contactY)) -
+                         Math.max(0, mapYToYards(this.offStartY) - mapYToYards(this.off.body.pos.y));
+      this.metrics.yac = Math.max(0, mapYToYards(contactY) - mapYToYards(this.off.body.pos.y)); // forward = smaller y
+
+      this.joint = null;
+      this.encounter.end();
+      this.timeScale = 1.0;
+
+      this.mode = Mode.POST;
+    }
+
+    render(alpha) {
+      ctx.clearRect(0, 0, W, H);
+
+      if (this.mode === Mode.MENU) {
+        this._drawMenu();
+        return;
+      }
+
+      const offP = this._interp(this.off.body, alpha);
+      const defP = this._interp(this.def.body, alpha);
+
+      const mid = vMul(vAdd(offP, defP), 0.5);
+      const dist = vLen(vSub(offP, defP));
+      const z = clamp(lerp(7.4, 5.2, clamp(dist / 10, 0, 1)), 4.9, 7.9);
+
+      this._applyCamera(mid, lerp(this.camera.zoom, z, 0.25));
+
+      this._drawFieldWorld();
+      this._drawPlayers(offP, defP);
+
+      this._resetCamera();
+
+      this._drawHUD(offP, defP);
+      if (this.debug) this._drawDebug(offP, defP);
+      if (this.mode === Mode.PAUSE) this._drawPause();
+      if (this.mode === Mode.POST) this._drawPost();
+
+      // Encounter overlay is screen-space for clarity
+      if (this.encounter.active) this._drawEncounterPrompt();
+    }
+
+    _interp(body, alpha) {
+      return { x: lerp(body.prevPos.x, body.pos.x, alpha), y: lerp(body.prevPos.y, body.pos.y, alpha) };
+    }
+
+    _applyCamera(mid, zoom) {
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.rotate(this.camera.shake.r);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-(mid.x + this.camera.shake.x), -(mid.y + this.camera.shake.y));
+    }
+
+    _resetCamera() { ctx.restore(); }
+
+    _drawFieldWorld() {
+      // Turf
+      ctx.fillStyle = "#0d1520";
+      ctx.fillRect(FIELD.x0, FIELD.y0, FIELD.worldW, FIELD.worldH);
+
+      // Sidelines
+      ctx.strokeStyle = "rgba(255,255,255,.12)";
+      ctx.lineWidth = 0.18;
+      ctx.strokeRect(FIELD.x0 + 1, FIELD.y0 + 1, FIELD.worldW - 2, FIELD.worldH - 2);
+
+      // End zone (top)
+      ctx.fillStyle = "rgba(34,197,94,.12)";
+      ctx.fillRect(FIELD.x0 + 1, FIELD.y0 + 1, FIELD.worldW - 2, FIELD.endZoneY - 1);
+
+      // Yard lines
+      const lines = 10;
+      for (let i = 0; i <= lines; i++) {
+        const y = lerp(FIELD.startY, FIELD.endZoneY, i / lines);
+        ctx.strokeStyle = (i % 2 === 0) ? "rgba(255,255,255,.10)" : "rgba(255,255,255,.06)";
+        ctx.lineWidth = 0.12;
+        ctx.beginPath();
+        ctx.moveTo(FIELD.x0 + 2, y);
+        ctx.lineTo(FIELD.x1 - 2, y);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "rgba(255,255,255,.6)";
+      ctx.font = "700 2.6px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("END ZONE", FIELD.worldW / 2, FIELD.endZoneY * 0.55);
+    }
+
+    _drawPlayers(offP, defP) {
+      // sprite frame based on speed
+      const offSpd = vLen(this.off.body.vel);
+      const defSpd = vLen(this.def.body.vel);
+
+      const offFrame = (this.off.render.animT * (0.9 + offSpd * 0.25)) % 1;
+      const defFrame = (this.def.render.animT * (0.9 + defSpd * 0.25)) % 1;
+
+      const offSprite = drawPlayerSprite(this.spriteOff, {
+        primary: this.off.render.primary,
+        secondary: this.off.render.secondary,
+        frame01: offFrame,
+        facing: this.off.body.facing,
+        isOffense: true,
+        telegraph: this.encounter.active ? (this.off.render.telegraph ?? null) : null,
+        flash01: this.off.render.flash,
+      });
+
+      const defSprite = drawPlayerSprite(this.spriteDef, {
+        primary: this.def.render.primary,
+        secondary: this.def.render.secondary,
+        frame01: defFrame,
+        facing: this.def.body.facing,
+        isOffense: false,
+        telegraph: this.encounter.active ? (this.def.render.telegraph ?? null) : null,
+        flash01: this.def.render.flash,
+      });
+
+      const pxPerWorld = 1; // handled by camera scaling
+      const spriteW = 6.2;
+      const spriteH = 6.2;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(offSprite, offP.x - spriteW / 2, offP.y - spriteH / 2, spriteW, spriteH);
+      ctx.drawImage(defSprite, defP.x - spriteW / 2, defP.y - spriteH / 2, spriteW, spriteH);
+      ctx.restore();
+    }
+
+    _drawHUD(offP, defP) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // top bar
+      ctx.fillStyle = "rgba(0,0,0,.28)";
+      roundRect(16, 14, W - 32, 44, 14);
+      ctx.fill();
+
+      const yard = mapYToYards(this.off.body.pos.y);
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "800 14px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillText(`Yard: ${yard}`, 30, 42);
+
+      const prog = clamp((FIELD.startY - this.off.body.pos.y) / (FIELD.startY - FIELD.endZoneY), 0, 1);
+      ctx.fillStyle = "rgba(255,255,255,.10)";
+      roundRect(130, 30, W - 420, 14, 8);
+      ctx.fill();
+      ctx.fillStyle = "rgba(34,197,94,.35)";
+      roundRect(130, 30, (W - 420) * prog, 14, 8);
+      ctx.fill();
+
+      const mom = Math.round(this.off.momentum.value);
+      const momCol = mom > 30 ? "rgba(34,197,94,.92)" : (mom < -30 ? "rgba(239,68,68,.92)" : "rgba(255,255,255,.92)");
+      ctx.textAlign = "right";
+      ctx.fillStyle = "rgba(255,255,255,.82)";
+      ctx.fillText(`${this.twoP ? "2P" : "AI"} • OFF:${this.offArch} • DEF:${this.defArch}`, W - 30, 30);
+
+      ctx.fillStyle = momCol;
+      ctx.fillText(`MOM: ${mom}`, W - 30, 50);
+
+      ctx.fillStyle = "rgba(255,255,255,.75)";
+      ctx.font = "600 12px system-ui";
+      ctx.fillText(`Time: ${this.metrics.time.toFixed(2)}s • Enc: ${this.metrics.encounters} • MTF: ${this.metrics.missedTackles} • Last: ${this.lastOutcome ?? "-"}`, W - 30, 70);
+
+      ctx.restore();
+    }
+
+    _drawEncounterPrompt() {
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,.35)";
+      ctx.fillRect(0, H - 110, W, 110);
+
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "900 18px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("CLASH WINDOW", W / 2, H - 74);
+
+      ctx.fillStyle = "rgba(255,255,255,.78)";
+      ctx.font = "700 13px system-ui";
+      ctx.fillText("Offense: 1 Truck • 2 Juke • 3 Spin   |   Break Drag: Space", W / 2, H - 48);
+
+      ctx.fillStyle = "rgba(255,255,255,.68)";
+      ctx.font = "600 12px system-ui";
+      ctx.fillText(this.twoP ? "Defense: 7 Wrap • 8 Dive • 9 Hit • 0 Contain" : "Defense: AI reads & counters", W / 2, H - 26);
+
+      ctx.restore();
+    }
+
+    _drawMenu() {
+      ctx.save();
+      ctx.fillStyle = "#0d1520";
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "900 42px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("OPEN FIELD", W / 2, 200);
+
+      ctx.font = "600 16px system-ui";
+      ctx.fillStyle = "rgba(255,255,255,.78)";
+      ctx.fillText("Vertical Field • Animated Sprite Players • Specials During Run • Better Contact Outcomes", W / 2, 240);
+
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "800 18px system-ui";
+      ctx.fillText("Press Enter to Start", W / 2, 310);
+
+      ctx.font = "600 14px system-ui";
+      ctx.fillStyle = "rgba(255,255,255,.75)";
+      ctx.fillText("M: toggle 2P   •   V: debug", W / 2, 350);
+
+      ctx.restore();
+    }
+
+    _drawPause() {
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,.35)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "900 30px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("PAUSED", W / 2, H / 2 - 10);
+      ctx.font = "600 14px system-ui";
+      ctx.fillStyle = "rgba(255,255,255,.78)";
+      ctx.fillText("Press Esc to resume", W / 2, H / 2 + 20);
+      ctx.restore();
+    }
+
+    _drawPost() {
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,.38)";
+      ctx.fillRect(0, 0, W, H);
+
+      const panelW = 720, panelH = 260;
+      const x = (W - panelW) / 2;
+      const y = 170;
+
+      ctx.fillStyle = "rgba(15,23,34,.92)";
+      ctx.strokeStyle = "rgba(255,255,255,.10)";
+      ctx.lineWidth = 1;
+      roundRect(x, y, panelW, panelH, 18);
+      ctx.fill(); ctx.stroke();
+
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.font = "900 24px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(`RESULT: ${this.lastOutcome}`, W / 2, y + 52);
+
+      const startY = mapYToYards(this.offStartY);
+      const endY = mapYToYards(this.off.body.pos.y);
+
+      ctx.font = "700 14px system-ui";
+      ctx.fillStyle = "rgba(255,255,255,.80)";
+      ctx.fillText(`Start ${startY} → End ${endY}`, W / 2, y + 92);
+      ctx.fillText(`Time ${this.metrics.time.toFixed(2)}s • Encounters ${this.metrics.encounters} • Missed Tackles ${this.metrics.missedTackles}`, W / 2, y + 118);
+
+      ctx.fillStyle = "rgba(255,255,255,.88)";
+      ctx.font = "800 15px system-ui";
+      ctx.fillText("Press R (or Enter) to run it back", W / 2, y + 200);
+
+      ctx.restore();
+    }
+
+    _drawDebug(offP, defP) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      const panelW = 380, panelH = 140;
+      const x = 16, y = 70;
+
+      ctx.fillStyle = "rgba(0,0,0,.28)";
+      roundRect(x, y, panelW, panelH, 14);
+      ctx.fill();
+
+      ctx.fillStyle = "rgba(255,255,255,.9)";
+      ctx.font = "800 12px system-ui";
+      ctx.textAlign = "left";
+      ctx.fillText("Debug", x + 12, y + 20);
+
+      ctx.font = "600 12px system-ui";
+      const offSpd = vLen(this.off.body.vel).toFixed(2);
+      const defSpd = vLen(this.def.body.vel).toFixed(2);
+
+      const lines = [
+        `Mode: ${this.mode}  simT: ${this.simT.toFixed(2)}  timeScale: ${this.timeScale.toFixed(2)}  2P: ${this.twoP}`,
+        `OFF: ${this.off.fsm.main}/${this.off.fsm.sub} spd:${offSpd} sta:${this.off.stamina.toFixed(0)} fat:${this.off.fatigue.toFixed(0)} mom:${this.off.momentum.value.toFixed(0)}`,
+        `DEF: ${this.def.fsm.main}/${this.def.fsm.sub} spd:${defSpd} sta:${this.def.stamina.toFixed(0)} fat:${this.def.fatigue.toFixed(0)}`,
+        `Joint: ${this.joint?.active ? "ACTIVE" : "none"}  Encounter: ${this.encounter.active ? this.encounter.stage : "none"}`,
+      ];
+
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillStyle = "rgba(255,255,255,.78)";
+        ctx.fillText(lines[i], x + 12, y + 44 + i * 22);
+      }
+
+      ctx.restore();
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  const game = new Game();
+
+  // Menu controls (keep simple)
+  window.addEventListener("keydown", (e) => {
+    if (game.mode !== Mode.MENU) return;
+    if (e.code === "KeyM") game.twoP = !game.twoP;
+    if (e.code === "KeyV") game.debug = !game.debug;
+  });
+
+  requestAnimationFrame(() => game.frame());
+})();
+</script>
+</body>
+</html>
