@@ -1,0 +1,1634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>OPEN FIELD ULTIMATE</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap');
+    
+    :root {
+      --primary: #00ff88;
+      --secondary: #ff3366;
+      --accent: #00d4ff;
+      --gold: #ffd700;
+      --dark: #0a0e14;
+      --darker: #060810;
+      --panel: rgba(10, 14, 20, 0.92);
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    html, body {
+      height: 100%;
+      background: var(--darker);
+      font-family: 'Rajdhani', sans-serif;
+      overflow: hidden;
+      color: white;
+      touch-action: none;
+    }
+    
+    #gameContainer {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: 
+        radial-gradient(ellipse at 50% 0%, rgba(0, 255, 136, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 100%, rgba(255, 51, 102, 0.08) 0%, transparent 50%),
+        var(--darker);
+    }
+    
+    canvas {
+      border-radius: 12px;
+      box-shadow: 
+        0 0 60px rgba(0, 255, 136, 0.15),
+        0 25px 80px rgba(0, 0, 0, 0.6);
+    }
+    
+    /* Overlays */
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.85);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s;
+      z-index: 100;
+    }
+    
+    .overlay.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 800px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+      backdrop-filter: blur(20px);
+    }
+    
+    .panel-title {
+      font-family: 'Orbitron', monospace;
+      font-size: 36px;
+      font-weight: 900;
+      color: var(--primary);
+      text-align: center;
+      margin-bottom: 30px;
+      text-shadow: 0 0 30px rgba(0, 255, 136, 0.5);
+    }
+    
+    .panel-subtitle {
+      text-align: center;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
+    
+    /* Skill Upgrade UI */
+    .skill-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+    
+    .skill-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 15px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .skill-card:hover {
+      border-color: var(--primary);
+      background: rgba(0, 255, 136, 0.1);
+      transform: translateY(-2px);
+    }
+    
+    .skill-card.selected {
+      border-color: var(--gold);
+      background: rgba(255, 215, 0, 0.15);
+      box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+    }
+    
+    .skill-name {
+      font-family: 'Orbitron', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+    
+    .skill-bar-container {
+      height: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 5px;
+    }
+    
+    .skill-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+    
+    .skill-value {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      text-align: right;
+    }
+    
+    .skill-desc {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.5);
+      margin-top: 5px;
+    }
+    
+    /* Defender Preview */
+    .defender-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      justify-content: center;
+      margin: 30px 0;
+    }
+    
+    .defender-card {
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 12px;
+      padding: 15px;
+      width: 140px;
+      text-align: center;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .defender-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      margin: 0 auto 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+    
+    .defender-name {
+      font-family: 'Orbitron', monospace;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    
+    .defender-stat {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+      margin: 3px 0;
+    }
+    
+    .defender-stat-value {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    
+    /* Buttons */
+    .btn {
+      display: inline-block;
+      padding: 15px 40px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border: none;
+      border-radius: 30px;
+      color: var(--dark);
+      font-family: 'Orbitron', monospace;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s;
+      box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+    }
+    
+    .btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 40px rgba(0, 255, 136, 0.6);
+    }
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+      box-shadow: none;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.2);
+      box-shadow: none;
+    }
+    
+    .btn-row {
+      display: flex;
+      gap: 15px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    
+    /* Round indicator */
+    .round-badge {
+      display: inline-block;
+      background: var(--gold);
+      color: var(--dark);
+      font-family: 'Orbitron', monospace;
+      font-weight: 900;
+      padding: 5px 15px;
+      border-radius: 20px;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    
+    /* HUD */
+    #hud {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      pointer-events: none;
+      font-family: 'Orbitron', monospace;
+      padding: 15px;
+    }
+    
+    .hud-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    
+    .hud-left, .hud-right {
+      background: var(--panel);
+      border: 1px solid rgba(0, 255, 136, 0.2);
+      border-radius: 12px;
+      padding: 12px 18px;
+    }
+    
+    .hud-stat {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 5px 0;
+    }
+    
+    .hud-label {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.5);
+      letter-spacing: 1px;
+      min-width: 60px;
+    }
+    
+    .hud-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    
+    .hud-value.gold { color: var(--gold); }
+    .hud-value.accent { color: var(--accent); }
+    
+    /* Move indicator */
+    #moveIndicator {
+      position: absolute;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--panel);
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      border-radius: 12px;
+      padding: 10px 20px;
+      font-family: 'Orbitron', monospace;
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    
+    #moveIndicator.visible {
+      opacity: 1;
+    }
+    
+    /* Mobile controls */
+    #mobileControls {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      width: 100%;
+      display: none;
+      justify-content: space-between;
+      padding: 0 20px;
+      pointer-events: auto;
+    }
+    
+    .joystick-container {
+      width: 120px;
+      height: 120px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      position: relative;
+    }
+    
+    .joystick-knob {
+      width: 50px;
+      height: 50px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 50%;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+    
+    .mobile-btns {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    
+    .mobile-btn {
+      width: 60px;
+      height: 45px;
+      background: var(--panel);
+      border: 2px solid var(--primary);
+      border-radius: 8px;
+      color: var(--primary);
+      font-family: 'Orbitron', monospace;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    
+    .mobile-btn:active {
+      background: var(--primary);
+      color: var(--dark);
+    }
+    
+    @media (max-width: 768px) {
+      #mobileControls { display: flex; }
+      .skill-grid { grid-template-columns: 1fr; }
+      .panel { padding: 20px; }
+      .panel-title { font-size: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="game"></canvas>
+    
+    <div id="hud">
+      <div class="hud-top">
+        <div class="hud-left">
+          <div class="hud-stat">
+            <span class="hud-label">ROUND</span>
+            <span class="hud-value gold" id="hudRound">1</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">SCORE</span>
+            <span class="hud-value" id="hudScore">0</span>
+          </div>
+        </div>
+        <div class="hud-right">
+          <div class="hud-stat">
+            <span class="hud-label">YARD</span>
+            <span class="hud-value accent" id="hudYard">50</span>
+          </div>
+          <div class="hud-stat">
+            <span class="hud-label">TIME</span>
+            <span class="hud-value" id="hudTime">0.0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="moveIndicator"></div>
+    
+    <div id="mobileControls">
+      <div class="joystick-container" id="joystick">
+        <div class="joystick-knob" id="joystickKnob"></div>
+      </div>
+      <div class="mobile-btns">
+        <button class="mobile-btn" id="btnJuke">JUKE</button>
+        <button class="mobile-btn" id="btnSpin">SPIN</button>
+        <button class="mobile-btn" id="btnTruck">TRUCK</button>
+        <button class="mobile-btn" id="btnSprint">SPRINT</button>
+      </div>
+    </div>
+    
+    <!-- Main Menu -->
+    <div class="overlay visible" id="menuOverlay">
+      <div class="panel" style="text-align: center;">
+        <div class="panel-title">OPEN FIELD</div>
+        <div class="panel-subtitle">Beat defenders. Score touchdowns. Become a legend.</div>
+        
+        <div style="margin: 40px 0;">
+          <div style="color: rgba(255,255,255,0.6); margin-bottom: 20px;">
+            <strong style="color: var(--accent);">WASD</strong> Move &nbsp;•&nbsp;
+            <strong style="color: var(--accent);">SHIFT</strong> Sprint &nbsp;•&nbsp;
+            <strong style="color: var(--accent);">1/2/3</strong> Juke/Spin/Truck
+          </div>
+          <div style="color: rgba(255,255,255,0.5); font-size: 14px;">
+            Use the RIGHT move based on defender position to beat them!
+          </div>
+        </div>
+        
+        <button class="btn" id="btnStart">START GAME</button>
+        
+        <div style="margin-top: 30px; color: var(--gold); font-size: 14px;" id="highScoreDisplay"></div>
+      </div>
+    </div>
+    
+    <!-- Pre-Round: Skill Upgrade -->
+    <div class="overlay" id="upgradeOverlay">
+      <div class="panel">
+        <div class="round-badge" id="roundBadge">ROUND 1</div>
+        <div class="panel-title">SKILL UPGRADE</div>
+        <div class="panel-subtitle">Choose 1 skill to improve (+1 point)</div>
+        
+        <div class="skill-grid" id="skillGrid"></div>
+        
+        <div class="btn-row">
+          <button class="btn" id="btnConfirmUpgrade">CONFIRM & SCOUT DEFENSE</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Pre-Round: Defender Scout -->
+    <div class="overlay" id="scoutOverlay">
+      <div class="panel">
+        <div class="round-badge" id="scoutRoundBadge">ROUND 1</div>
+        <div class="panel-title">DEFENSIVE LINEUP</div>
+        <div class="panel-subtitle" id="scoutSubtitle">1 Defender to beat</div>
+        
+        <div class="defender-preview" id="defenderPreview"></div>
+        
+        <div style="background: rgba(0,0,0,0.3); border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <div style="color: var(--accent); font-family: 'Orbitron', monospace; font-size: 12px; margin-bottom: 10px;">HOW TO BEAT DEFENDERS</div>
+          <div style="color: rgba(255,255,255,0.7); font-size: 13px; line-height: 1.8;">
+            <span style="color: #ff6b6b;">●</span> Defender <strong>in front</strong> → <strong style="color: var(--primary);">JUKE</strong> (sidestep around)<br>
+            <span style="color: #ff6b6b;">●</span> Defender <strong>at angle/side</strong> → <strong style="color: var(--primary);">SPIN</strong> (rotate away)<br>
+            <span style="color: #ff6b6b;">●</span> Defender <strong>close & grabbing</strong> → <strong style="color: var(--primary);">TRUCK</strong> (power through)
+          </div>
+        </div>
+        
+        <div class="btn-row">
+          <button class="btn" id="btnStartRound">START ROUND</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Post-Round -->
+    <div class="overlay" id="postOverlay">
+      <div class="panel" style="text-align: center;">
+        <div class="panel-title" id="postTitle">TOUCHDOWN!</div>
+        <div class="panel-subtitle" id="postSubtitle"></div>
+        
+        <div style="margin: 30px 0;">
+          <div style="font-size: 48px; color: var(--gold); font-family: 'Orbitron', monospace; font-weight: 900;" id="postScore">0</div>
+          <div style="color: rgba(255,255,255,0.5); font-size: 14px;">TOTAL SCORE</div>
+        </div>
+        
+        <div id="postStats" style="margin: 20px 0;"></div>
+        
+        <div class="btn-row">
+          <button class="btn" id="btnNextRound">NEXT ROUND</button>
+          <button class="btn btn-secondary" id="btnMainMenu">MAIN MENU</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ============ AUDIO ============
+  class AudioSystem {
+    constructor() {
+      this.ctx = null;
+      this.muted = false;
+    }
+    init() {
+      if (this.ctx) return;
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    play(freq, dur, type = 'sine', vol = 0.3) {
+      if (!this.ctx || this.muted) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + dur);
+    }
+    juke() { this.play(500, 0.1); setTimeout(() => this.play(700, 0.1), 50); }
+    spin() { this.play(400, 0.15, 'triangle'); this.play(600, 0.1, 'triangle'); }
+    truck() { this.play(100, 0.2, 'sawtooth', 0.4); this.play(150, 0.15, 'square', 0.3); }
+    hit() { this.play(80, 0.2, 'sawtooth', 0.5); }
+    breakTackle() { this.play(300, 0.1); setTimeout(() => this.play(500, 0.1), 80); setTimeout(() => this.play(800, 0.15), 150); }
+    touchdown() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.play(f, 0.3, 'sine', 0.4), i * 120)); }
+    fail() { this.play(200, 0.3, 'sawtooth', 0.3); setTimeout(() => this.play(150, 0.4, 'sawtooth', 0.3), 150); }
+    upgrade() { this.play(400, 0.1); setTimeout(() => this.play(600, 0.1), 100); setTimeout(() => this.play(800, 0.15), 200); }
+  }
+  const audio = new AudioSystem();
+
+  // ============ CANVAS ============
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  
+  function resize() {
+    const c = document.getElementById('gameContainer');
+    const maxW = Math.min(c.clientWidth - 40, 1100);
+    const maxH = Math.min(c.clientHeight - 40, 650);
+    const aspect = 11 / 7;
+    let w = maxW, h = w / aspect;
+    if (h > maxH) { h = maxH; w = h * aspect; }
+    canvas.width = Math.floor(w);
+    canvas.height = Math.floor(h);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ============ UTILS ============
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const now = () => performance.now() / 1000;
+  const rand = (a, b) => Math.random() * (b - a) + a;
+  const v2 = (x = 0, y = 0) => ({ x, y });
+  const vAdd = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+  const vSub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+  const vMul = (a, s) => ({ x: a.x * s, y: a.y * s });
+  const vLen = (a) => Math.hypot(a.x, a.y);
+  const vNorm = (a) => { const l = vLen(a) || 1; return { x: a.x / l, y: a.y / l }; };
+  const vDist = (a, b) => vLen(vSub(a, b));
+  const vDot = (a, b) => a.x * b.x + a.y * b.y;
+  const angle = (a) => Math.atan2(a.y, a.x);
+
+  // ============ CONSTANTS ============
+  const DT = 1 / 60;
+  const FIELD = { w: 70, h: 150, startY: 130, endY: 18, pad: 3 };
+  const yardLine = (y) => Math.round(lerp(50, 100, clamp((FIELD.startY - y) / (FIELD.startY - FIELD.endY), 0, 1)));
+
+  // Defender types with colors and stats
+  const DEF_TYPES = {
+    SPEEDSTER: { name: 'SPEEDSTER', color: '#00d4ff', speed: 9.5, accel: 55, tackle: 6, pursuit: 9, size: 1.1 },
+    TACKLER: { name: 'TACKLER', color: '#ff3366', speed: 7.5, accel: 40, tackle: 9, pursuit: 7, size: 1.25 },
+    BALANCED: { name: 'BALANCED', color: '#a855f7', speed: 8.2, accel: 48, tackle: 7.5, pursuit: 8, size: 1.2 },
+    HITTER: { name: 'HITTER', color: '#ff6b35', speed: 7, accel: 35, tackle: 8, pursuit: 6, size: 1.4 },
+    HYBRID: { name: 'HYBRID', color: '#22c55e', speed: 8.8, accel: 50, tackle: 7, pursuit: 8.5, size: 1.15 },
+  };
+
+  // ============ INPUT ============
+  const KEYS = new Set();
+  window.addEventListener("keydown", (e) => { KEYS.add(e.code); if (["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault(); }, { passive: false });
+  window.addEventListener("keyup", (e) => KEYS.delete(e.code));
+
+  let joystickDir = v2(), mobileActions = { sprint: false, juke: false, spin: false, truck: false };
+  
+  const joystick = document.getElementById('joystick');
+  const joystickKnob = document.getElementById('joystickKnob');
+  let joyActive = false, joyCenter = v2();
+  
+  joystick?.addEventListener('touchstart', (e) => { e.preventDefault(); joyActive = true; const r = joystick.getBoundingClientRect(); joyCenter = v2(r.left + r.width/2, r.top + r.height/2); });
+  joystick?.addEventListener('touchmove', (e) => {
+    if (!joyActive) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    const dx = t.clientX - joyCenter.x, dy = t.clientY - joyCenter.y;
+    const dist = Math.min(vLen(v2(dx, dy)), 40);
+    const ang = Math.atan2(dy, dx);
+    joystickDir = dist > 8 ? v2(Math.cos(ang), Math.sin(ang)) : v2();
+    joystickKnob.style.transform = `translate(calc(-50% + ${Math.cos(ang)*dist}px), calc(-50% + ${Math.sin(ang)*dist}px))`;
+  });
+  joystick?.addEventListener('touchend', () => { joyActive = false; joystickDir = v2(); joystickKnob.style.transform = 'translate(-50%, -50%)'; });
+  
+  document.getElementById('btnJuke')?.addEventListener('touchstart', () => mobileActions.juke = true);
+  document.getElementById('btnSpin')?.addEventListener('touchstart', () => mobileActions.spin = true);
+  document.getElementById('btnTruck')?.addEventListener('touchstart', () => mobileActions.truck = true);
+  document.getElementById('btnSprint')?.addEventListener('touchstart', () => mobileActions.sprint = true);
+  document.getElementById('btnSprint')?.addEventListener('touchend', () => mobileActions.sprint = false);
+
+  // ============ PARTICLES ============
+  class Particles {
+    constructor() { this.list = []; }
+    add(x, y, count, cfg) {
+      for (let i = 0; i < count; i++) {
+        const ang = cfg.angle + (Math.random() - 0.5) * cfg.spread;
+        const spd = cfg.speed * (0.5 + Math.random() * 0.5);
+        this.list.push({
+          x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+          life: cfg.life * (0.7 + Math.random() * 0.6),
+          maxLife: cfg.life,
+          color: Array.isArray(cfg.color) ? cfg.color[Math.floor(Math.random() * cfg.color.length)] : cfg.color,
+          size: cfg.size * (0.5 + Math.random() * 0.5),
+          type: cfg.type || 'circle'
+        });
+      }
+    }
+    update(dt) {
+      for (let i = this.list.length - 1; i >= 0; i--) {
+        const p = this.list[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 20 * dt;
+        p.life -= dt;
+        if (p.life <= 0) this.list.splice(i, 1);
+      }
+    }
+    draw(ctx, cam) {
+      this.list.forEach(p => {
+        const pos = cam.toScreen(p.x, p.y);
+        const sz = p.size * cam.zoom;
+        const alpha = clamp(p.life / p.maxLife, 0, 1);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        if (p.type === 'circle') {
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, sz, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillRect(pos.x - sz/2, pos.y - sz, sz, sz * 2);
+        }
+        ctx.globalAlpha = 1;
+      });
+    }
+    dust(x, y) { this.add(x, y, 6, { angle: -Math.PI/2, spread: Math.PI, speed: 6, life: 0.4, size: 0.25, color: ['#5a4a3a', '#6b5b4b'], type: 'rect' }); }
+    impact(x, y, color) { this.add(x, y, 20, { angle: 0, spread: Math.PI*2, speed: 18, life: 0.5, size: 0.4, color: [color, '#ffffff', '#ffd700'] }); }
+    juke(x, y, dir) { this.add(x, y, 15, { angle: Math.atan2(dir.y, dir.x) + Math.PI, spread: Math.PI*0.4, speed: 12, life: 0.35, size: 0.3, color: ['#00ff88', '#00d4ff'] }); }
+    spin(x, y) { for (let i = 0; i < 24; i++) this.add(x, y, 1, { angle: (i/24)*Math.PI*2, spread: 0.1, speed: 10, life: 0.4, size: 0.25, color: '#00d4ff' }); }
+    truck(x, y, dir) { this.add(x, y, 25, { angle: Math.atan2(dir.y, dir.x), spread: Math.PI*0.3, speed: 20, life: 0.5, size: 0.5, color: ['#ff6b35', '#ffd700', '#ff3366'] }); }
+    td(x, y) { for (let i = 0; i < 3; i++) setTimeout(() => this.add(x, y - i*2, 50, { angle: -Math.PI/2, spread: Math.PI*2, speed: 25, life: 0.8, size: 0.5, color: ['#ffd700', '#00ff88', '#ff3366', '#00d4ff'] }), i * 80); }
+  }
+
+  // ============ CAMERA ============
+  class Camera {
+    constructor() { this.x = FIELD.w/2; this.y = FIELD.startY; this.zoom = 6; this.targetZoom = 6; this.shake = { x: 0, y: 0, t: 0 }; }
+    follow(target, dt) {
+      this.x = lerp(this.x, target.x, 6 * dt);
+      this.y = lerp(this.y, target.y - 6, 6 * dt);
+      this.zoom = lerp(this.zoom, this.targetZoom, 4 * dt);
+      this.shake.t = Math.max(0, this.shake.t - dt * 2);
+      const tr = this.shake.t * this.shake.t;
+      this.shake.x = (Math.random() * 2 - 1) * tr * 0.6;
+      this.shake.y = (Math.random() * 2 - 1) * tr * 0.6;
+    }
+    addShake(a) { this.shake.t = clamp(this.shake.t + a, 0, 1); }
+    toScreen(wx, wy) {
+      return { x: canvas.width/2 + (wx - this.x + this.shake.x) * this.zoom, y: canvas.height/2 + (wy - this.y + this.shake.y) * this.zoom };
+    }
+  }
+
+  // ============ PLAYER ============
+  class Player {
+    constructor(skills) {
+      this.x = FIELD.w / 2;
+      this.y = FIELD.startY;
+      this.vx = 0;
+      this.vy = 0;
+      this.radius = 1.2;
+      this.facing = v2(0, -1);
+      this.skills = skills;
+      this.stamina = 100;
+      this.stun = 0;
+      this.moveCD = 0;
+      this.currentMove = null;
+      this.moveTimer = 0;
+      this.animTime = 0;
+      this.flash = 0;
+      this.legPhase = 0;
+      this.armPhase = 0;
+      this.bodyTilt = 0;
+      this.spinAngle = 0;
+    }
+    
+    getSpeed() { return 7 + this.skills.speed * 0.4; }
+    getAccel() { return 35 + this.skills.acceleration * 4; }
+    
+    update(dt, input) {
+      this.animTime += dt;
+      this.stun = Math.max(0, this.stun - dt);
+      this.moveCD = Math.max(0, this.moveCD - dt);
+      this.flash = Math.max(0, this.flash - dt * 4);
+      
+      if (this.moveTimer > 0) {
+        this.moveTimer -= dt;
+        if (this.moveTimer <= 0) this.currentMove = null;
+      }
+      
+      if (this.stun > 0) {
+        this.vx *= 0.95;
+        this.vy *= 0.95;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        return;
+      }
+      
+      // Movement
+      const sprintMult = input.sprint && this.stamina > 10 ? 1.25 : 1;
+      const maxSpd = this.getSpeed() * sprintMult;
+      const accel = this.getAccel() * sprintMult;
+      
+      const targetVx = input.dir.x * maxSpd;
+      const targetVy = input.dir.y * maxSpd;
+      
+      this.vx = lerp(this.vx, targetVx, accel * dt / 10);
+      this.vy = lerp(this.vy, targetVy, accel * dt / 10);
+      
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      
+      // Bounds
+      const minX = FIELD.pad + this.radius;
+      const maxX = FIELD.w - FIELD.pad - this.radius;
+      if (this.x < minX) { this.x = minX; this.vx *= -0.2; }
+      if (this.x > maxX) { this.x = maxX; this.vx *= -0.2; }
+      
+      // Facing & animation
+      const spd = vLen(v2(this.vx, this.vy));
+      if (spd > 0.5) {
+        this.facing = vNorm(v2(this.vx, this.vy));
+        this.legPhase += spd * dt * 1.8;
+        this.armPhase += spd * dt * 1.8;
+      }
+      
+      // Body tilt based on lateral movement
+      const lateralV = this.vx;
+      this.bodyTilt = lerp(this.bodyTilt, clamp(lateralV * 0.08, -0.4, 0.4), 8 * dt);
+      
+      // Spin angle decay
+      if (this.currentMove !== 'SPIN') {
+        this.spinAngle = lerp(this.spinAngle, 0, 5 * dt);
+      }
+      
+      // Stamina
+      if (input.sprint && spd > 1) {
+        this.stamina = Math.max(0, this.stamina - 12 * dt);
+      } else {
+        this.stamina = Math.min(100, this.stamina + 6 * dt);
+      }
+    }
+    
+    doMove(move, particles) {
+      if (this.moveCD > 0 || this.stun > 0) return false;
+      
+      this.currentMove = move;
+      this.moveTimer = 0.35;
+      this.moveCD = 0.5;
+      this.flash = 1;
+      
+      const dir = this.facing;
+      const perpDir = v2(dir.y, -dir.x);
+      
+      if (move === 'JUKE') {
+        const side = Math.random() < 0.5 ? 1 : -1;
+        const power = 8 + this.skills.agility * 0.8;
+        this.vx += perpDir.x * side * power;
+        this.vy += perpDir.y * side * power;
+        this.bodyTilt = side * 0.5;
+        particles.juke(this.x, this.y, vMul(perpDir, side));
+        audio.juke();
+      } else if (move === 'SPIN') {
+        const power = 6 + this.skills.spinMove * 0.6;
+        this.vx = this.vx * 0.4 + dir.x * power;
+        this.vy = this.vy * 0.4 + dir.y * power;
+        this.spinAngle = Math.PI * 2;
+        particles.spin(this.x, this.y);
+        audio.spin();
+      } else if (move === 'TRUCK') {
+        const power = 10 + this.skills.strength * 1.0;
+        this.vx += dir.x * power;
+        this.vy += dir.y * power;
+        particles.truck(this.x, this.y, dir);
+        audio.truck();
+      }
+      
+      return true;
+    }
+  }
+
+  // ============ DEFENDER ============
+  class Defender {
+    constructor(x, y, type) {
+      this.x = x;
+      this.y = y;
+      this.vx = 0;
+      this.vy = 0;
+      this.type = type;
+      this.radius = type.size;
+      this.facing = v2(0, 1);
+      this.stun = 0;
+      this.flash = 0;
+      this.animTime = Math.random() * 10;
+      this.legPhase = 0;
+      this.thinkTimer = 0;
+      this.target = v2(x, y);
+      this.beaten = false;
+    }
+    
+    update(dt, player) {
+      this.animTime += dt;
+      this.stun = Math.max(0, this.stun - dt);
+      this.flash = Math.max(0, this.flash - dt * 3);
+      
+      if (this.stun > 0 || this.beaten) {
+        this.vx *= 0.92;
+        this.vy *= 0.92;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        return;
+      }
+      
+      // AI
+      this.thinkTimer -= dt;
+      if (this.thinkTimer <= 0) {
+        this.thinkTimer = 0.08 + Math.random() * 0.06;
+        
+        const lookAhead = 0.25 + this.type.pursuit * 0.03;
+        const px = player.x + player.vx * lookAhead;
+        const py = player.y + player.vy * lookAhead;
+        
+        this.target.x = px + (Math.random() - 0.5) * 2;
+        this.target.y = py + 1.5;
+      }
+      
+      const dx = this.target.x - this.x;
+      const dy = this.target.y - this.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist > 0.5) {
+        const dir = vNorm(v2(dx, dy));
+        const targetVx = dir.x * this.type.speed;
+        const targetVy = dir.y * this.type.speed;
+        
+        this.vx = lerp(this.vx, targetVx, this.type.accel * dt / 10);
+        this.vy = lerp(this.vy, targetVy, this.type.accel * dt / 10);
+      }
+      
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      
+      // Bounds
+      this.x = clamp(this.x, FIELD.pad + this.radius, FIELD.w - FIELD.pad - this.radius);
+      
+      // Facing
+      const spd = vLen(v2(this.vx, this.vy));
+      if (spd > 0.5) {
+        this.facing = vNorm(v2(this.vx, this.vy));
+        this.legPhase += spd * dt * 1.5;
+      }
+    }
+  }
+
+  // ============ RENDERER ============
+  function drawField(ctx, cam) {
+    // Turf
+    const tl = cam.toScreen(0, 0);
+    const br = cam.toScreen(FIELD.w, FIELD.h);
+    
+    const grad = ctx.createLinearGradient(0, tl.y, 0, br.y);
+    grad.addColorStop(0, '#0d2818');
+    grad.addColorStop(0.5, '#0a1f15');
+    grad.addColorStop(1, '#0d2818');
+    ctx.fillStyle = grad;
+    ctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    
+    // Yard lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    for (let yard = 50; yard <= 100; yard += 5) {
+      const worldY = FIELD.startY - (yard - 50) / 50 * (FIELD.startY - FIELD.endY);
+      const l = cam.toScreen(2, worldY);
+      const r = cam.toScreen(FIELD.w - 2, worldY);
+      ctx.beginPath();
+      ctx.moveTo(l.x, l.y);
+      ctx.lineTo(r.x, r.y);
+      ctx.stroke();
+      
+      if (yard % 10 === 0) {
+        ctx.font = '10px Orbitron';
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.textAlign = 'center';
+        const lbl = cam.toScreen(FIELD.w/2, worldY);
+        ctx.fillText(yard.toString(), lbl.x, lbl.y - 4);
+      }
+    }
+    
+    // End zone
+    const ez = cam.toScreen(0, FIELD.endY);
+    const ezH = 50 * cam.zoom / 6;
+    ctx.fillStyle = 'rgba(0,255,136,0.12)';
+    ctx.fillRect(tl.x, ez.y - ezH, br.x - tl.x, ezH);
+    ctx.font = '14px Orbitron';
+    ctx.fillStyle = 'rgba(0,255,136,0.4)';
+    ctx.textAlign = 'center';
+    const ezLbl = cam.toScreen(FIELD.w/2, FIELD.endY - 4);
+    ctx.fillText('END ZONE', ezLbl.x, ezLbl.y);
+    
+    // Sidelines
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    const sideL = cam.toScreen(FIELD.pad, 0);
+    const sideR = cam.toScreen(FIELD.w - FIELD.pad, 0);
+    ctx.beginPath();
+    ctx.moveTo(sideL.x, tl.y);
+    ctx.lineTo(sideL.x, br.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(sideR.x, tl.y);
+    ctx.lineTo(sideR.x, br.y);
+    ctx.stroke();
+  }
+
+  function drawPlayer(ctx, cam, player) {
+    const pos = cam.toScreen(player.x, player.y);
+    const scale = cam.zoom * 0.85;
+    const ang = Math.atan2(player.facing.y, player.facing.x) + Math.PI / 2;
+    
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+    
+    // Apply spin rotation
+    const totalRot = ang + player.spinAngle + player.bodyTilt;
+    ctx.rotate(totalRot);
+    
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, scale * 1.2, scale * 0.9, scale * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Flash glow
+    if (player.flash > 0) {
+      ctx.fillStyle = `rgba(0,255,136,${player.flash * 0.4})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, scale * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    const runCycle = Math.sin(player.legPhase * 8);
+    const armCycle = Math.sin(player.armPhase * 8 + Math.PI / 2);
+    
+    // Legs
+    ctx.fillStyle = '#1a1a2e';
+    const legSpread = player.currentMove === 'JUKE' ? 0.5 : 0.3;
+    const legOffset = runCycle * scale * 0.4;
+    
+    // Left leg
+    ctx.save();
+    ctx.translate(-scale * legSpread, scale * 0.3);
+    ctx.rotate(legOffset * 0.1);
+    ctx.fillRect(-scale * 0.22, 0, scale * 0.44, scale * 0.9 + legOffset * 0.3);
+    // Cleat
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(-scale * 0.25, scale * 0.85 + legOffset * 0.3, scale * 0.5, scale * 0.2);
+    ctx.restore();
+    
+    // Right leg
+    ctx.save();
+    ctx.fillStyle = '#1a1a2e';
+    ctx.translate(scale * legSpread, scale * 0.3);
+    ctx.rotate(-legOffset * 0.1);
+    ctx.fillRect(-scale * 0.22, 0, scale * 0.44, scale * 0.9 - legOffset * 0.3);
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(-scale * 0.25, scale * 0.85 - legOffset * 0.3, scale * 0.5, scale * 0.2);
+    ctx.restore();
+    
+    // Torso
+    ctx.fillStyle = '#00cc6a';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, scale * 0.7, scale * 0.9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Jersey stripe
+    ctx.fillStyle = '#00ff88';
+    ctx.fillRect(-scale * 0.1, -scale * 0.5, scale * 0.2, scale * 0.9);
+    
+    // Shoulder pads
+    ctx.fillStyle = '#008855';
+    ctx.fillRect(-scale * 0.85, -scale * 0.4, scale * 0.35, scale * 0.5);
+    ctx.fillRect(scale * 0.5, -scale * 0.4, scale * 0.35, scale * 0.5);
+    
+    // Arms
+    const armSwing = armCycle * scale * 0.25;
+    const armExtend = player.currentMove === 'TRUCK' ? scale * 0.4 : 0;
+    
+    // Left arm
+    ctx.fillStyle = '#f5caa8';
+    ctx.save();
+    ctx.translate(-scale * 0.7, -scale * 0.1);
+    ctx.rotate(-0.3 - armSwing * 0.15 - armExtend * 0.02);
+    ctx.fillRect(-scale * 0.18, 0, scale * 0.36, scale * 0.7 + armExtend);
+    ctx.restore();
+    
+    // Right arm (with ball)
+    ctx.save();
+    ctx.translate(scale * 0.7, -scale * 0.1);
+    ctx.rotate(0.3 + armSwing * 0.15);
+    ctx.fillStyle = '#f5caa8';
+    ctx.fillRect(-scale * 0.18, 0, scale * 0.36, scale * 0.55);
+    // Ball
+    ctx.fillStyle = '#8B4513';
+    ctx.beginPath();
+    ctx.ellipse(0, scale * 0.6, scale * 0.28, scale * 0.18, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-scale * 0.1, scale * 0.55);
+    ctx.lineTo(scale * 0.1, scale * 0.65);
+    ctx.stroke();
+    ctx.restore();
+    
+    // Head/Helmet
+    ctx.fillStyle = '#e8e8e8';
+    ctx.beginPath();
+    ctx.arc(0, -scale * 0.7, scale * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Facemask
+    ctx.strokeStyle = '#888888';
+    ctx.lineWidth = scale * 0.08;
+    ctx.beginPath();
+    ctx.arc(0, -scale * 0.6, scale * 0.32, 0.4, Math.PI - 0.4);
+    ctx.stroke();
+    
+    // Visor shine
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(-scale * 0.15, -scale * 0.85, scale * 0.15, scale * 0.08, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Move indicator above head
+    if (player.currentMove) {
+      ctx.rotate(-totalRot); // Unrotate for text
+      ctx.font = `bold ${scale * 0.5}px Orbitron`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = player.currentMove === 'JUKE' ? '#00ff88' : player.currentMove === 'SPIN' ? '#00d4ff' : '#ff6b35';
+      ctx.fillText(player.currentMove + '!', 0, -scale * 1.8);
+    }
+    
+    ctx.restore();
+  }
+
+  function drawDefender(ctx, cam, def) {
+    const pos = cam.toScreen(def.x, def.y);
+    const scale = cam.zoom * 0.85 * (def.type.size / 1.2);
+    const ang = Math.atan2(def.facing.y, def.facing.x) + Math.PI / 2;
+    
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+    ctx.rotate(ang);
+    
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, scale * 1.2, scale * 0.9, scale * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Flash/stun
+    if (def.flash > 0 || def.stun > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${Math.max(def.flash, def.stun) * 0.4})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, scale * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    // Beaten indicator
+    if (def.beaten) {
+      ctx.globalAlpha = 0.5;
+    }
+    
+    const runCycle = Math.sin(def.legPhase * 8);
+    
+    // Legs
+    ctx.fillStyle = '#1a1a2e';
+    const legOffset = runCycle * scale * 0.35;
+    
+    ctx.save();
+    ctx.translate(-scale * 0.3, scale * 0.3);
+    ctx.fillRect(-scale * 0.22, 0, scale * 0.44, scale * 0.85 + legOffset * 0.3);
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(-scale * 0.25, scale * 0.8 + legOffset * 0.3, scale * 0.5, scale * 0.2);
+    ctx.restore();
+    
+    ctx.save();
+    ctx.fillStyle = '#1a1a2e';
+    ctx.translate(scale * 0.3, scale * 0.3);
+    ctx.fillRect(-scale * 0.22, 0, scale * 0.44, scale * 0.85 - legOffset * 0.3);
+    ctx.fillStyle = '#0a0a0f';
+    ctx.fillRect(-scale * 0.25, scale * 0.8 - legOffset * 0.3, scale * 0.5, scale * 0.2);
+    ctx.restore();
+    
+    // Torso - type color
+    ctx.fillStyle = def.type.color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, scale * 0.75, scale * 0.95, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Darker shade for depth
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    ctx.ellipse(scale * 0.2, scale * 0.1, scale * 0.4, scale * 0.6, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Shoulder pads
+    const darkerColor = def.type.color.replace(/[0-9a-f]{2}$/i, (m) => Math.max(0, parseInt(m, 16) - 40).toString(16).padStart(2, '0'));
+    ctx.fillStyle = darkerColor;
+    ctx.fillRect(-scale * 0.9, -scale * 0.45, scale * 0.4, scale * 0.55);
+    ctx.fillRect(scale * 0.5, -scale * 0.45, scale * 0.4, scale * 0.55);
+    
+    // Arms (tackling pose)
+    ctx.fillStyle = '#f5caa8';
+    ctx.save();
+    ctx.translate(-scale * 0.75, -scale * 0.1);
+    ctx.rotate(-0.8);
+    ctx.fillRect(-scale * 0.18, 0, scale * 0.36, scale * 0.7);
+    ctx.restore();
+    
+    ctx.save();
+    ctx.translate(scale * 0.75, -scale * 0.1);
+    ctx.rotate(0.8);
+    ctx.fillRect(-scale * 0.18, 0, scale * 0.36, scale * 0.7);
+    ctx.restore();
+    
+    // Head/Helmet - darker for defenders
+    ctx.fillStyle = '#333333';
+    ctx.beginPath();
+    ctx.arc(0, -scale * 0.75, scale * 0.48, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Facemask
+    ctx.strokeStyle = '#666666';
+    ctx.lineWidth = scale * 0.1;
+    ctx.beginPath();
+    ctx.arc(0, -scale * 0.65, scale * 0.35, 0.4, Math.PI - 0.4);
+    ctx.stroke();
+    
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // ============ GAME STATE ============
+  class Game {
+    constructor() {
+      this.state = 'MENU'; // MENU, UPGRADE, SCOUT, PLAY, POST
+      this.round = 1;
+      this.score = 0;
+      this.highScore = parseInt(localStorage.getItem('openFieldHS') || '0');
+      
+      this.skills = {
+        speed: 5,
+        acceleration: 5,
+        breakTackle: 5,
+        spinMove: 5,
+        agility: 5,
+        strength: 5
+      };
+      this.selectedSkill = null;
+      
+      this.player = null;
+      this.defenders = [];
+      this.particles = new Particles();
+      this.camera = new Camera();
+      
+      this.roundTime = 0;
+      this.roundScore = 0;
+      this.roundBrokenTackles = 0;
+      
+      this.lastT = now();
+      this.acc = 0;
+      
+      this.updateHighScoreDisplay();
+    }
+    
+    updateHighScoreDisplay() {
+      const el = document.getElementById('highScoreDisplay');
+      if (el && this.highScore > 0) el.textContent = `HIGH SCORE: ${this.highScore}`;
+    }
+    
+    getDefenderCount() { return Math.min(this.round, 7); }
+    
+    generateDefenders() {
+      this.defenders = [];
+      const count = this.getDefenderCount();
+      const types = Object.values(DEF_TYPES);
+      
+      // Position defenders strategically
+      const positions = [
+        { x: FIELD.w / 2, y: FIELD.startY - 18 },
+        { x: FIELD.w / 3, y: FIELD.startY - 32 },
+        { x: FIELD.w * 2/3, y: FIELD.startY - 32 },
+        { x: FIELD.w / 2, y: FIELD.startY - 48 },
+        { x: FIELD.w / 4, y: FIELD.startY - 60 },
+        { x: FIELD.w * 3/4, y: FIELD.startY - 60 },
+        { x: FIELD.w / 2, y: FIELD.startY - 75 },
+      ];
+      
+      for (let i = 0; i < count; i++) {
+        const type = types[i % types.length];
+        const pos = positions[i];
+        this.defenders.push(new Defender(pos.x + rand(-3, 3), pos.y + rand(-2, 2), type));
+      }
+    }
+    
+    showUpgradeScreen() {
+      this.state = 'UPGRADE';
+      this.selectedSkill = null;
+      
+      document.getElementById('roundBadge').textContent = `ROUND ${this.round}`;
+      
+      const grid = document.getElementById('skillGrid');
+      grid.innerHTML = '';
+      
+      const skillInfo = {
+        speed: { name: 'SPEED', desc: 'Max running speed' },
+        acceleration: { name: 'ACCELERATION', desc: 'How fast you reach top speed' },
+        breakTackle: { name: 'BREAK TACKLE', desc: 'Chance to break free from tackles' },
+        spinMove: { name: 'SPIN MOVE', desc: 'Effectiveness of spin moves' },
+        agility: { name: 'AGILITY', desc: 'Lateral quickness and juke power' },
+        strength: { name: 'STRENGTH', desc: 'Truck power and contact balance' }
+      };
+      
+      for (const [key, info] of Object.entries(skillInfo)) {
+        const val = this.skills[key];
+        const card = document.createElement('div');
+        card.className = 'skill-card';
+        card.innerHTML = `
+          <div class="skill-name">${info.name}</div>
+          <div class="skill-bar-container">
+            <div class="skill-bar" style="width: ${val * 10}%"></div>
+          </div>
+          <div class="skill-value">${val}/10</div>
+          <div class="skill-desc">${info.desc}</div>
+        `;
+        
+        if (val < 10) {
+          card.addEventListener('click', () => {
+            document.querySelectorAll('.skill-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            this.selectedSkill = key;
+            audio.init();
+            audio.play(400, 0.1);
+          });
+        } else {
+          card.style.opacity = '0.5';
+          card.style.cursor = 'not-allowed';
+        }
+        
+        grid.appendChild(card);
+      }
+      
+      document.getElementById('upgradeOverlay').classList.add('visible');
+    }
+    
+    confirmUpgrade() {
+      if (this.selectedSkill && this.skills[this.selectedSkill] < 10) {
+        this.skills[this.selectedSkill]++;
+        audio.upgrade();
+      }
+      
+      document.getElementById('upgradeOverlay').classList.remove('visible');
+      this.showScoutScreen();
+    }
+    
+    showScoutScreen() {
+      this.state = 'SCOUT';
+      this.generateDefenders();
+      
+      document.getElementById('scoutRoundBadge').textContent = `ROUND ${this.round}`;
+      document.getElementById('scoutSubtitle').textContent = `${this.defenders.length} Defender${this.defenders.length > 1 ? 's' : ''} to beat`;
+      
+      const preview = document.getElementById('defenderPreview');
+      preview.innerHTML = '';
+      
+      this.defenders.forEach((def, i) => {
+        const card = document.createElement('div');
+        card.className = 'defender-card';
+        card.innerHTML = `
+          <div class="defender-icon" style="background: ${def.type.color}">🏈</div>
+          <div class="defender-name" style="color: ${def.type.color}">${def.type.name}</div>
+          <div class="defender-stat"><span>Speed</span><span class="defender-stat-value">${def.type.speed.toFixed(1)}</span></div>
+          <div class="defender-stat"><span>Tackle</span><span class="defender-stat-value">${def.type.tackle.toFixed(1)}</span></div>
+          <div class="defender-stat"><span>Pursuit</span><span class="defender-stat-value">${def.type.pursuit.toFixed(1)}</span></div>
+        `;
+        preview.appendChild(card);
+      });
+      
+      document.getElementById('scoutOverlay').classList.add('visible');
+    }
+    
+    startRound() {
+      document.getElementById('scoutOverlay').classList.remove('visible');
+      
+      this.state = 'PLAY';
+      this.player = new Player(this.skills);
+      this.roundTime = 0;
+      this.roundScore = 0;
+      this.roundBrokenTackles = 0;
+      
+      this.camera.x = FIELD.w / 2;
+      this.camera.y = FIELD.startY;
+      this.camera.zoom = 6;
+      this.camera.targetZoom = 6;
+      
+      this.particles.list = [];
+    }
+    
+    getInput() {
+      let dir = v2();
+      if (KEYS.has('KeyW') || KEYS.has('ArrowUp')) dir.y -= 1;
+      if (KEYS.has('KeyS') || KEYS.has('ArrowDown')) dir.y += 1;
+      if (KEYS.has('KeyA') || KEYS.has('ArrowLeft')) dir.x -= 1;
+      if (KEYS.has('KeyD') || KEYS.has('ArrowRight')) dir.x += 1;
+      
+      if (vLen(joystickDir) > 0.1) dir = joystickDir;
+      if (vLen(dir) > 1) dir = vNorm(dir);
+      
+      const sprint = KEYS.has('ShiftLeft') || KEYS.has('ShiftRight') || mobileActions.sprint;
+      
+      let move = null;
+      if (KEYS.has('Digit1') || mobileActions.juke) { move = 'JUKE'; KEYS.delete('Digit1'); mobileActions.juke = false; }
+      if (KEYS.has('Digit2') || mobileActions.spin) { move = 'SPIN'; KEYS.delete('Digit2'); mobileActions.spin = false; }
+      if (KEYS.has('Digit3') || mobileActions.truck) { move = 'TRUCK'; KEYS.delete('Digit3'); mobileActions.truck = false; }
+      
+      return { dir, sprint, move };
+    }
+    
+    // Determine best move based on defender position relative to player
+    getBestMove(def) {
+      const toDefender = vSub(v2(def.x, def.y), v2(this.player.x, this.player.y));
+      const dist = vLen(toDefender);
+      const dotFacing = vDot(vNorm(toDefender), this.player.facing);
+      const crossFacing = toDefender.x * this.player.facing.y - toDefender.y * this.player.facing.x;
+      
+      // Defender directly in front (dot product close to 1)
+      if (dotFacing > 0.7 && dist > 3) return 'JUKE';
+      // Defender at an angle or to the side
+      if (Math.abs(crossFacing) > 0.5 || (dotFacing > 0.3 && dotFacing < 0.7)) return 'SPIN';
+      // Defender very close / already in contact
+      if (dist < 3.5) return 'TRUCK';
+      
+      return 'JUKE';
+    }
+    
+    checkCollisions() {
+      const p = this.player;
+      
+      for (const def of this.defenders) {
+        if (def.beaten || def.stun > 0) continue;
+        
+        const dist = vDist(v2(p.x, p.y), v2(def.x, def.y));
+        const collisionDist = p.radius + def.radius;
+        
+        if (dist < collisionDist + 1.5) {
+          // Show recommended move
+          const bestMove = this.getBestMove(def);
+          const indicator = document.getElementById('moveIndicator');
+          indicator.innerHTML = `<span style="color: ${def.type.color}">vs ${def.type.name}</span> → Best: <span style="color: var(--primary)">${bestMove}</span>`;
+          indicator.classList.add('visible');
+          setTimeout(() => indicator.classList.remove('visible'), 1500);
+        }
+        
+        if (dist < collisionDist) {
+          // Collision! Check if player made a move
+          const usedMove = p.currentMove;
+          const bestMove = this.getBestMove(def);
+          
+          // Calculate success chance
+          let successChance = 0.25; // Base chance
+          
+          if (usedMove) {
+            if (usedMove === bestMove) {
+              // Right move!
+              successChance += 0.4;
+            }
+            
+            // Add skill bonuses
+            if (usedMove === 'JUKE') successChance += this.skills.agility * 0.04;
+            if (usedMove === 'SPIN') successChance += this.skills.spinMove * 0.04;
+            if (usedMove === 'TRUCK') successChance += this.skills.strength * 0.04;
+            
+            successChance += this.skills.breakTackle * 0.02;
+          }
+          
+          // Defender tackle rating reduces chance
+          successChance -= def.type.tackle * 0.03;
+          
+          successChance = clamp(successChance, 0.1, 0.9);
+          
+          if (Math.random() < successChance) {
+            // Beat the defender!
+            def.beaten = true;
+            def.stun = 1.5;
+            def.flash = 1;
+            
+            const pushDir = vNorm(vSub(v2(def.x, def.y), v2(p.x, p.y)));
+            def.vx = pushDir.x * 12;
+            def.vy = pushDir.y * 12;
+            
+            this.particles.impact(def.x, def.y, def.type.color);
+            this.camera.addShake(0.3);
+            audio.breakTackle();
+            
+            this.roundBrokenTackles++;
+            this.roundScore += 100;
+          } else {
+            // Tackled!
+            this.endRound(false);
+            return;
+          }
+        }
+      }
+    }
+    
+    update(dt) {
+      if (this.state !== 'PLAY' || !this.player) return;
+      
+      this.roundTime += dt;
+      
+      const input = this.getInput();
+      
+      // Handle moves
+      if (input.move) {
+        this.player.doMove(input.move, this.particles);
+      }
+      
+      this.player.update(dt, input);
+      this.defenders.forEach(d => d.update(dt, this.player));
+      
+      this.checkCollisions();
+      
+      this.particles.update(dt);
+      this.camera.follow(this.player, dt);
+      
+      // Check win
+      if (this.player.y <= FIELD.endY) {
+        this.particles.td(this.player.x, this.player.y);
+        audio.touchdown();
+        this.roundScore += 500;
+        this.endRound(true);
+      }
+      
+      // Check out of bounds
+      if (this.player.x < FIELD.pad + 0.5 || this.player.x > FIELD.w - FIELD.pad - 0.5) {
+        this.endRound(false);
+      }
+      
+      // Update HUD
+      document.getElementById('hudRound').textContent = this.round;
+      document.getElementById('hudScore').textContent = this.score + this.roundScore;
+      document.getElementById('hudYard').textContent = yardLine(this.player.y);
+      document.getElementById('hudTime').textContent = this.roundTime.toFixed(1);
+    }
+    
+    endRound(won) {
+      this.state = 'POST';
+      
+      if (won) {
+        this.score += this.roundScore;
+        document.getElementById('postTitle').textContent = 'TOUCHDOWN!';
+        document.getElementById('postTitle').style.color = 'var(--primary)';
+        document.getElementById('btnNextRound').textContent = 'NEXT ROUND';
+        document.getElementById('btnNextRound').style.display = '';
+      } else {
+        audio.fail();
+        this.camera.addShake(0.5);
+        document.getElementById('postTitle').textContent = 'TACKLED!';
+        document.getElementById('postTitle').style.color = 'var(--secondary)';
+        document.getElementById('btnNextRound').textContent = 'TRY AGAIN';
+        document.getElementById('btnNextRound').style.display = '';
+        
+        // Game over if tackled
+        if (this.score > this.highScore) {
+          this.highScore = this.score;
+          localStorage.setItem('openFieldHS', this.highScore.toString());
+        }
+      }
+      
+      document.getElementById('postSubtitle').textContent = won ? 'You beat the defense!' : 'The defense got you!';
+      document.getElementById('postScore').textContent = this.score;
+      
+      document.getElementById('postStats').innerHTML = `
+        <div style="color: rgba(255,255,255,0.6);">
+          Round ${this.round} • ${yardLine(this.player?.y || FIELD.startY)} yards • 
+          ${this.roundBrokenTackles} broken tackle${this.roundBrokenTackles !== 1 ? 's' : ''} • 
+          ${this.roundTime.toFixed(1)}s
+        </div>
+        ${this.score >= this.highScore && this.score > 0 ? '<div style="color: var(--gold); margin-top: 10px;">★ NEW HIGH SCORE! ★</div>' : ''}
+      `;
+      
+      this.wonRound = won;
+      document.getElementById('postOverlay').classList.add('visible');
+    }
+    
+    nextRound() {
+      document.getElementById('postOverlay').classList.remove('visible');
+      
+      if (this.wonRound) {
+        this.round++;
+        this.showUpgradeScreen();
+      } else {
+        // Reset game
+        this.round = 1;
+        this.score = 0;
+        this.skills = { speed: 5, acceleration: 5, breakTackle: 5, spinMove: 5, agility: 5, strength: 5 };
+        this.showUpgradeScreen();
+      }
+    }
+    
+    render() {
+      ctx.fillStyle = '#0a1015';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      if (this.state === 'PLAY' && this.player) {
+        drawField(ctx, this.camera);
+        this.defenders.forEach(d => drawDefender(ctx, this.camera, d));
+        drawPlayer(ctx, this.camera, this.player);
+        this.particles.draw(ctx, this.camera);
+      }
+    }
+    
+    frame() {
+      const t = now();
+      const frameTime = clamp(t - this.lastT, 0, 0.05);
+      this.lastT = t;
+      
+      this.acc += frameTime;
+      while (this.acc >= DT) {
+        this.update(DT);
+        this.acc -= DT;
+      }
+      
+      this.render();
+      requestAnimationFrame(() => this.frame());
+    }
+  }
+
+  // ============ INIT ============
+  const game = new Game();
+  
+  document.getElementById('btnStart')?.addEventListener('click', () => {
+    audio.init();
+    document.getElementById('menuOverlay').classList.remove('visible');
+    game.showUpgradeScreen();
+  });
+  
+  document.getElementById('btnConfirmUpgrade')?.addEventListener('click', () => {
+    game.confirmUpgrade();
+  });
+  
+  document.getElementById('btnStartRound')?.addEventListener('click', () => {
+    game.startRound();
+  });
+  
+  document.getElementById('btnNextRound')?.addEventListener('click', () => {
+    game.nextRound();
+  });
+  
+  document.getElementById('btnMainMenu')?.addEventListener('click', () => {
+    document.getElementById('postOverlay').classList.remove('visible');
+    document.getElementById('menuOverlay').classList.add('visible');
+    game.round = 1;
+    game.score = 0;
+    game.skills = { speed: 5, acceleration: 5, breakTackle: 5, spinMove: 5, agility: 5, strength: 5 };
+    game.updateHighScoreDisplay();
+  });
+  
+  game.frame();
+})();
+</script>
+</body>
+</html>
