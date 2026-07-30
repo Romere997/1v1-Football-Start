@@ -204,7 +204,7 @@ canvas{border-radius:12px;box-shadow:0 0 60px rgba(0,255,136,0.15),0 25px 80px r
 (()=>{"use strict";
 
 // ============ AUDIO ============
-class Audio{
+class SFX{
   constructor(){this.ctx=null}
   init(){if(!this.ctx)this.ctx=new(window.AudioContext||window.webkitAudioContext)}
   play(f,d,t="sine",v=.25){
@@ -232,12 +232,13 @@ class Audio{
   menuMove(){this.play(400,.05,"sine",.1)}
   menuSelect(){this.play(600,.08,"sine",.15)}
 }
-const audio=new Audio;
+const audio=new SFX;
 
 // ============ CANVAS ============
 const canvas=document.getElementById("game");
 const ctx=canvas.getContext("2d");
 
+const VIEW={w:0,h:0}; // logical (CSS pixel) size - camera math uses this
 function resize(){
   const c=document.getElementById("gameContainer");
   const maxW=Math.min(c.clientWidth-30,1100);
@@ -245,8 +246,13 @@ function resize(){
   const aspect=11/7;
   let w=maxW,h=w/aspect;
   if(h>maxH){h=maxH;w=h*aspect}
-  canvas.width=Math.floor(w);
-  canvas.height=Math.floor(h);
+  w=Math.floor(w);h=Math.floor(h);
+  VIEW.w=w;VIEW.h=h;
+  // Render at device resolution so the game isn't blurry on retina/4K screens.
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  canvas.style.width=w+"px";canvas.style.height=h+"px";
+  canvas.width=Math.floor(w*dpr);canvas.height=Math.floor(h*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
 }
 resize();
 window.addEventListener("resize",resize);
@@ -360,7 +366,7 @@ class Camera{
   constructor(){this.x=FIELD.w/2;this.y=FIELD.startY;this.zoom=6;this.shake={x:0,y:0,t:0}}
   follow(target,dt){this.x=lerp(this.x,target.x,5*dt);this.y=lerp(this.y,target.y-7,5*dt);this.shake.t=Math.max(0,this.shake.t-dt*2.5);const tr=this.shake.t*this.shake.t;this.shake.x=(Math.random()*2-1)*tr*.5;this.shake.y=(Math.random()*2-1)*tr*.5}
   addShake(a){this.shake.t=clamp(this.shake.t+a,0,1)}
-  toScreen(wx,wy){return{x:canvas.width/2+(wx-this.x+this.shake.x)*this.zoom,y:canvas.height/2+(wy-this.y+this.shake.y)*this.zoom}}
+  toScreen(wx,wy){return{x:VIEW.w/2+(wx-this.x+this.shake.x)*this.zoom,y:VIEW.h/2+(wy-this.y+this.shake.y)*this.zoom}}
 }
 
 // ============ PLAYER (WR) ============
@@ -482,11 +488,17 @@ class WideReceiver{
     else if(this.route==="STREAK")targetY=this.startY-depth*1.4;
     return v2(clamp(targetX,FIELD.pad+2,FIELD.w-FIELD.pad-2),clamp(targetY,FIELD.endY+5,FIELD.startY));
   }
-  update(dt,defenders){
+  update(dt,defenders,input=null){
     this.routeTimer+=dt;this.catchAnim=Math.max(0,this.catchAnim-dt*3);
     if(this.hasBall){
-      const dy=FIELD.endY-this.y;const dir=vNorm(v2(0,dy));
-      this.vx=lerp(this.vx,0,this.accel*dt/10);this.vy=lerp(this.vy,dir.y*this.speed*1.15,this.accel*dt/10);
+      if(input&&vLen(input.dir)>.1){
+        const spd=this.speed*(input.sprint?1.22:1);
+        this.vx=lerp(this.vx,input.dir.x*spd,this.accel*dt/10);
+        this.vy=lerp(this.vy,input.dir.y*spd,this.accel*dt/10);
+      }else{
+        this.vx=lerp(this.vx,0,this.accel*dt/10);
+        this.vy=lerp(this.vy,-this.speed*1.15,this.accel*dt/10);
+      }
     }else{
       this.targetPos=this.getRouteTarget();
       const dx=this.targetPos.x-this.x,dy=this.targetPos.y-this.y,dist=Math.sqrt(dx*dx+dy*dy);
@@ -499,7 +511,10 @@ class WideReceiver{
     if(spd>.4){this.facing=vNorm(v2(this.vx,this.vy));this.legPhase+=spd*dt*2}
     let closestDefDist=Infinity;
     for(const def of defenders){if(def.beaten||def.blocked)continue;const dist=vDist(v2(this.x,this.y),v2(def.x,def.y));if(dist<closestDefDist)closestDefDist=dist}
-    this.openness=clamp((closestDefDist-4)/14,0,1);
+    // Ramp in over the first ~0.8s so he isn't flagged "OPEN!" on the snap,
+    // before he's even started running the route.
+    const routeRamp=clamp(this.routeTimer/.8,0,1);
+    this.openness=clamp((closestDefDist-4)/14,0,1)*routeRamp;
   }
   catchBall(particles){this.hasBall=true;this.catchAnim=1;particles.catch(this.x,this.y);audio.catch()}
 }
@@ -508,16 +523,29 @@ class WideReceiver{
 class Football{
   constructor(sx,sy,tx,ty,power,accuracy){
     this.x=sx;this.y=sy;this.startX=sx;this.startY=sy;
-    const maxError=(1-accuracy)*10;
-    this.targetX=tx+rand(-maxError,maxError);this.targetY=ty+rand(-maxError,maxError);
-    const dx=this.targetX-sx,dy=this.targetY-sy;const dir=vNorm(v2(dx,dy));
-    this.vx=dir.x*power;this.vy=dir.y*power;this.radius=.4;this.rotation=0;this.active=true;this.airTime=0;
-    this.maxAirTime=Math.sqrt(dx*dx+dy*dy)/power+.3;
+    const maxError=(1-accuracy)*6; // was *10 - throws were wildly inaccurate
+    this.targetX=clamp(tx+rand(-maxError,maxError),FIELD.pad+1,FIELD.w-FIELD.pad-1);
+    this.targetY=ty+rand(-maxError,maxError);
+    const dx=this.targetX-sx,dy=this.targetY-sy;
+    this.dist=Math.hypot(dx,dy)||1;
+    this.vx=dx/this.dist*power;this.vy=dy/this.dist*power;
+    this.radius=.4;this.rotation=0;this.active=true;this.airTime=0;
+    this.flightTime=this.dist/power;  // time to actually reach the target
+    this.height=0;                    // arc height, purely visual
+    this.catchAttempted=false;        // the WR gets exactly ONE catch roll
+    this.intAttempted=new Set();      // each defender gets exactly ONE pick roll
+    this.result=null;                 // CAUGHT | DROPPED | PICKED | INCOMPLETE
   }
   update(dt){
     if(!this.active)return;
     this.x+=this.vx*dt;this.y+=this.vy*dt;this.rotation+=dt*15;this.airTime+=dt;
-    if(this.x<FIELD.pad||this.x>FIELD.w-FIELD.pad||this.y<FIELD.endY-5||this.y>FIELD.startY+5||this.airTime>this.maxAirTime+1)this.active=false;
+    const t=clamp(this.airTime/this.flightTime,0,1);
+    this.height=Math.sin(t*Math.PI)*Math.min(this.dist*.12,3.5);
+    // The ball now LANDS instead of flying forever. Landing uncaught = incomplete.
+    if(this.airTime>=this.flightTime||this.x<FIELD.pad||this.x>FIELD.w-FIELD.pad||this.y<FIELD.endY-2||this.y>FIELD.startY+4){
+      this.active=false;
+      if(!this.result)this.result="INCOMPLETE";
+    }
   }
 }
 
@@ -583,12 +611,15 @@ class Defender{
     this.beaten=false;this.blocked=false;
     this.maxStamina=type.maxStamina;
     this.stamina=this.maxStamina;
-    this.chargeTarget=null; // For BULL behavior
+    this.chargeTarget=null;this.bullTimer=0; // For BULL behavior
     this.zoneActivated=false; // For ZONE behavior
     this.coveringWR=false; // For COVER behavior
   }
   update(dt,player,wr=null){
     this.stun=Math.max(0,this.stun-dt);
+    // BUGFIX: `blocked` was set to true and never cleared, so one bump from the
+    // blocker removed a defender from the play permanently.
+    if(this.blocked&&this.stun<=0)this.blocked=false;
     if(this.stun>0||this.beaten||this.blocked){
       this.vx*=.92;this.vy*=.92;
       this.x+=this.vx*dt;this.y+=this.vy*dt;
@@ -622,11 +653,12 @@ class Defender{
         this.coveringWR=false;
       
       switch(this.type.behavior){
-        case "CHASE": // Direct pursuit - fastest, tires quickly
+        case "CHASE":{ // Direct pursuit - fastest, tires quickly
           const lookAhead=.3+this.type.pursuit*.04;
           this.target.x=ballCarrier.x+ballCarrier.vx*lookAhead;
           this.target.y=ballCarrier.y+ballCarrier.vy*lookAhead+1;
           break;
+        }
           
         case "ZONE": // Hold position until player gets close, then commit
           if(!this.zoneActivated&&distToPlayer<18){
@@ -647,26 +679,34 @@ class Defender{
           this.target.y=Math.min(this.y+2,ballCarrier.y+3); // Stay slightly ahead
           break;
           
-        case "BULL": // Charge at where player WAS (delayed reaction)
-          if(!this.chargeTarget||this.thinkTimer<=0){
+        case "BULL":{ // Charge at where the player WAS (delayed reaction)
+          // BUGFIX: this used to test `this.thinkTimer<=0`, but thinkTimer was
+          // reset to ~0.15 a few lines above, so it was ALWAYS false. The charge
+          // target was set once and never updated - the HITTER just stood there.
+          this.bullTimer--;
+          if(!this.chargeTarget||this.bullTimer<=0){
             this.chargeTarget=v2(ballCarrier.x,ballCarrier.y);
+            this.bullTimer=6; // commit to this spot for ~0.9s, then re-aim
           }
           this.target.x=this.chargeTarget.x;
           this.target.y=this.chargeTarget.y+2;
           break;
+        }
           
-        case "CUT": // Cut off angle to endzone
+        case "CUT":{ // Cut off angle to endzone
           const playerToEZ=v2(FIELD.w/2-ballCarrier.x,(FIELD.endY-ballCarrier.y));
           const cutPoint=.4; // How far along path to intercept
           this.target.x=ballCarrier.x+playerToEZ.x*cutPoint;
           this.target.y=ballCarrier.y+playerToEZ.y*cutPoint;
           break;
+        }
           
-        case "COVER": // If not covering WR, chase ball carrier
+        case "COVER":{ // If not covering WR, chase ball carrier
           const la=.25+this.type.pursuit*.03;
           this.target.x=ballCarrier.x+ballCarrier.vx*la;
           this.target.y=ballCarrier.y+ballCarrier.vy*la+1;
           break;
+        }
       }
       } // close the else block
     }
@@ -765,9 +805,16 @@ function drawPlayer(c,cam,p){
   if(p.truckAnim>0){c.rotate(-1.2);c.fillRect(-s*.16,0,s*.32,s*.75+truckArm);c.fillStyle="#e8b898";c.beginPath();c.arc(0,s*.8+truckArm,s*.18,0,Math.PI*2);c.fill()}
   else{c.rotate(-.25-armSwing*.12);c.fillRect(-s*.16,0,s*.32,s*.6)}
   c.restore();
-  c.save();c.translate(s*.65,-s*.05+padDrop);c.rotate(.35+armSwing*.1);c.fillStyle="#f5caa8";c.fillRect(-s*.16,0,s*.32,s*.5);
-  c.fillStyle="#8B4513";c.save();c.translate(0,s*.55);c.rotate(.4);c.beginPath();c.ellipse(0,0,s*.26,s*.16,0,0,Math.PI*2);c.fill();
-  c.strokeStyle="#ffffff";c.lineWidth=s*.04;c.beginPath();c.moveTo(-s*.08,-s*.02);c.lineTo(s*.08,s*.02);c.stroke();c.restore();c.restore();
+  const throwLift=p.throwAnim>0?-Math.sin(p.throwAnim*Math.PI)*.9:0;
+  c.save();c.translate(s*.65,-s*.05+padDrop);c.rotate(.35+armSwing*.1+throwLift);c.fillStyle="#f5caa8";c.fillRect(-s*.16,0,s*.32,s*.5);
+  // BUGFIX: only draw the ball in his hand if he actually HAS the ball.
+  // Previously this drew unconditionally, so after a pass you saw the QB's ball,
+  // the ball in the air, and the WR's ball = "multiple footballs".
+  if(p.hasBall){
+    c.fillStyle="#8B4513";c.save();c.translate(0,s*.55);c.rotate(.4);c.beginPath();c.ellipse(0,0,s*.26,s*.16,0,0,Math.PI*2);c.fill();
+    c.strokeStyle="#ffffff";c.lineWidth=s*.04;c.beginPath();c.moveTo(-s*.08,-s*.02);c.lineTo(s*.08,s*.02);c.stroke();c.restore();
+  }
+  c.restore();
   c.fillStyle="#e8e8e8";c.beginPath();c.arc(0,-s*.68+shoulderDrop*.5,s*.42,0,Math.PI*2);c.fill();
   c.fillStyle=staminaPct<.2?"#ff8866":"#00ff88";c.fillRect(-s*.05,-s*1.08+shoulderDrop*.5,s*.1,s*.4);
   c.strokeStyle="#777777";c.lineWidth=s*.07;c.beginPath();c.arc(0,-s*.58+shoulderDrop*.5,s*.3,.35,Math.PI-.35);c.stroke();
@@ -803,13 +850,18 @@ function drawWideReceiver(c,cam,wr){
 
 function drawFootball(c,cam,ball){
   if(!ball||!ball.active)return;
-  const pos=cam.toScreen(ball.x,ball.y);const s=cam.zoom*.5;
-  c.save();c.translate(pos.x,pos.y);c.rotate(ball.rotation);
-  c.fillStyle="rgba(0,0,0,0.3)";c.beginPath();c.ellipse(0,s*1.5,s*.6,s*.15,0,0,Math.PI*2);c.fill();
+  const ground=cam.toScreen(ball.x,ball.y);
+  const s=cam.zoom*.5;
+  const h=(ball.height||0)*cam.zoom;
+  // Shadow stays on the turf so you can read where the ball will come down.
+  c.save();c.translate(ground.x,ground.y);
+  c.fillStyle="rgba(0,0,0,0.35)";c.beginPath();c.ellipse(0,0,s*.6*(1-h/(s*14)),s*.2,0,0,Math.PI*2);c.fill();
+  c.restore();
+  c.save();c.translate(ground.x,ground.y-h);c.rotate(ball.rotation);
+  c.fillStyle="rgba(255,149,0,0.3)";c.beginPath();c.arc(0,0,s*1.2,0,Math.PI*2);c.fill();
   c.fillStyle="#8B4513";c.beginPath();c.ellipse(0,0,s*.7,s*.4,0,0,Math.PI*2);c.fill();
   c.strokeStyle="#ffffff";c.lineWidth=s*.08;c.beginPath();c.moveTo(-s*.2,0);c.lineTo(s*.2,0);c.stroke();
   c.beginPath();for(let i=-1;i<=1;i++){c.moveTo(i*s*.15,-s*.12);c.lineTo(i*s*.15,s*.12)}c.stroke();
-  c.fillStyle="rgba(255,149,0,0.3)";c.beginPath();c.arc(0,0,s*1.2,0,Math.PI*2);c.fill();
   c.restore();
 }
 
@@ -880,7 +932,7 @@ class Game{
     this.particles=new Particles;this.camera=new Camera;
     this.roundTime=0;this.roundScore=0;this.roundBrokenTackles=0;this.totalBrokenTackles=0;
     this.lastT=now();this.acc=0;
-    this.menuFocus=0;
+    this.menuFocus=0;this.wonRound=false;
     this.updateHSDisplay();
   }
   
@@ -1016,6 +1068,8 @@ class Game{
     this.camera.x=FIELD.w/2;this.camera.y=FIELD.startY;this.camera.zoom=6;
     this.particles.list=[];
     this.renderHudLives();
+    document.getElementById("moveIndicator").classList.remove("visible");
+    document.getElementById("passIndicator").classList.remove("visible");
     document.getElementById("hudWrSection").style.display=this.useReceiver?"block":"none";
   }
   
@@ -1028,22 +1082,33 @@ class Game{
     if(vLen(joyDir)>.1)dir=joyDir;
     if(vLen(dir)>1)dir=vNorm(dir);
     const sprint=KEYS.has("ShiftLeft")||KEYS.has("ShiftRight")||mobAct.sprint;
+    // Use consumeKey (edge-triggered) instead of has+delete. The old version
+    // let a later `if` overwrite an earlier move, so pressing 1 and 2 together
+    // silently ate the juke, and OS key-repeat could machine-gun moves.
     let move=null;
-    if(KEYS.has("Digit1")||mobAct.juke){move="JUKE";KEYS.delete("Digit1");mobAct.juke=false}
-    if(KEYS.has("Digit2")||mobAct.spin){move="SPIN";KEYS.delete("Digit2");mobAct.spin=false}
-    if(KEYS.has("Digit3")||mobAct.truck){move="TRUCK";KEYS.delete("Digit3");mobAct.truck=false}
+    if(consumeKey("Digit1")||mobAct.juke){move="JUKE";mobAct.juke=false}
+    else if(consumeKey("Digit2")||mobAct.spin){move="SPIN";mobAct.spin=false}
+    else if(consumeKey("Digit3")||mobAct.truck){move="TRUCK";mobAct.truck=false}
     let pass=false;
-    if(KEYS.has("Digit4")||mobAct.pass){pass=true;KEYS.delete("Digit4");mobAct.pass=false}
+    if(consumeKey("Digit4")||mobAct.pass){pass=true;mobAct.pass=false}
     return{dir,sprint,move,pass};
   }
   
   tryPass(){
     if(!this.receiver||!this.player.hasBall||this.football)return false;
     if(this.receiver.hasBall)return false;
+    if(this.player.stun>0)return false;
     const power=this.player.getThrowPower();
     const accuracy=this.player.getThrowAccuracy();
-    // Lead the receiver
-    const leadTime=vDist(v2(this.player.x,this.player.y),v2(this.receiver.x,this.receiver.y))/power*.7;
+    // Lead the receiver. The old version used a flat 0.7x fudge factor and
+    // consistently threw BEHIND him. Iterate to an actual intercept solution.
+    const from=v2(this.player.x,this.player.y-1);
+    let leadTime=vDist(from,v2(this.receiver.x,this.receiver.y))/power;
+    for(let i=0;i<3;i++){
+      const px=this.receiver.x+this.receiver.vx*leadTime;
+      const py=this.receiver.y+this.receiver.vy*leadTime;
+      leadTime=vDist(from,v2(px,py))/power;
+    }
     const targetX=this.receiver.x+this.receiver.vx*leadTime;
     const targetY=this.receiver.y+this.receiver.vy*leadTime;
     this.football=new Football(this.player.x,this.player.y-1,targetX,targetY,power,accuracy);
@@ -1056,48 +1121,79 @@ class Game{
     const dist=vLen(toDef);
     const dot=vDot(vNorm(toDef),this.player.facing);
     const cross=toDef.x*this.player.facing.y-toDef.y*this.player.facing.x;
-    if(dot>.65&&dist>3.5)return"JUKE";
-    if(Math.abs(cross)>.5||dot>.25&&dot<.65)return"SPIN";
+    // Order matters. Previously the SPIN test ran before the distance test, and
+    // |cross|>.5 is true for any angle past ~30deg, so TRUCK was never suggested.
+    if(dist<3.2&&dot>.4)return"TRUCK";      // right on top of you, head-on -> run him over
+    if(dot>.6&&dist>3.2)return"JUKE";       // square in front with room -> juke
+    if(Math.abs(cross)>.55)return"SPIN";    // coming from the side -> spin off
     if(dist<4)return"TRUCK";
     return"JUKE";
   }
   
   checkCollisions(){
     const p=this.player;
+    let showingMoveHint=false;
     
-    // Check football catches/interceptions
-    if(this.football&&this.football.active){
-      // Check WR catch
-      if(this.receiver&&!this.receiver.hasBall){
-        const dist=vDist(v2(this.football.x,this.football.y),v2(this.receiver.x,this.receiver.y));
-        if(dist<this.receiver.radius+1.5){
-          const catchChance=.5+this.receiver.openness*.4;
-          if(Math.random()<catchChance){
-            this.receiver.catchBall(this.particles);this.football.active=false;
-            this.roundScore+=150;
-          }else{
-            this.football.active=false;audio.incomplete();
+    // ---- Ball in the air ----
+    if(this.football){
+      if(this.football.active){
+        // WR catch: ONE roll per throw, and a much fairer chance than before.
+        if(this.receiver&&!this.receiver.hasBall&&!this.football.catchAttempted){
+          const dist=vDist(v2(this.football.x,this.football.y),v2(this.receiver.x,this.receiver.y));
+          if(dist<this.receiver.radius+2){
+            this.football.catchAttempted=true;
+            const catchChance=clamp(
+              .62+this.receiver.openness*.28+this.skills.throwAccuracy*.012+this.skills.wrSpeed*.005,
+              .45,.97);
+            if(Math.random()<catchChance){
+              this.receiver.catchBall(this.particles);
+              this.football.active=false;this.football.result="CAUGHT";
+              this.roundScore+=150;
+            }else{
+              this.football.active=false;this.football.result="DROPPED";
+            }
+          }
+        }
+        // Interception: ONE roll per defender per throw. This used to re-roll
+        // EVERY FRAME the ball was near a defender, which made picks near-certain.
+        if(this.football.active){
+          for(const def of this.defenders){
+            if(def.beaten||def.blocked||def.stun>0)continue;
+            if(this.football.intAttempted.has(def))continue;
+            const dist=vDist(v2(this.football.x,this.football.y),v2(def.x,def.y));
+            if(dist<def.radius+1.2){
+              this.football.intAttempted.add(def);
+              const intChance=clamp((def.type.behavior==="COVER"?.22:.07)-this.skills.throwAccuracy*.01,.02,.3);
+              if(Math.random()<intChance){this.football.active=false;this.football.result="PICKED";break}
+            }
           }
         }
       }
-      // Check defender interception
-      for(const def of this.defenders){
-        if(def.beaten||def.blocked||def.stun>0)continue;
-        const dist=vDist(v2(this.football.x,this.football.y),v2(def.x,def.y));
-        if(dist<def.radius+1){
-          const intChance=def.type.behavior==="COVER"?.4:.15;
-          if(Math.random()<intChance){
-            this.football.active=false;audio.incomplete();
-            this.loseLife();return;
-          }
-        }
+      // Resolve a dead ball exactly once, then CLEAR IT.
+      // Not clearing this was the bug that made a second pass impossible and
+      // left the game running with nobody holding the ball.
+      if(!this.football.active){
+        const result=this.football.result;
+        this.football=null;
+        if(result==="PICKED"){audio.incomplete();this.endPlay("INTERCEPTED");return}
+        if(result==="DROPPED"||result==="INCOMPLETE"){audio.incomplete();this.endPlay("INCOMPLETE");return}
       }
     }
     
     // Ball carrier collisions
-    let ballCarrier=p;
-    if(this.receiver&&this.receiver.hasBall)ballCarrier=this.receiver;
-    
+    let ballCarrier=null;
+    if(p.hasBall)ballCarrier=p;
+    else if(this.receiver&&this.receiver.hasBall)ballCarrier=this.receiver;
+
+    // BUGFIX: while the ball is in the air NOBODY is the carrier, so there is
+    // nothing to tackle. Previously the QB stayed "the ball carrier" after
+    // throwing, so he got tackled mid-flight and the play died before the pass
+    // could ever be completed - this is what made passing feel broken.
+    if(!ballCarrier){
+      document.getElementById("moveIndicator").classList.remove("visible");
+      return;
+    }
+
     for(const def of this.defenders){
       if(def.beaten||def.blocked||def.stun>0)continue;
       const dist=vDist(v2(ballCarrier.x,ballCarrier.y),v2(def.x,def.y));
@@ -1107,6 +1203,7 @@ class Game{
         const indicator=document.getElementById("moveIndicator");
         indicator.innerHTML=`<span style="color:${def.type.color}">${def.type.name}</span> → <span style="color:var(--primary);font-weight:bold">${best==="JUKE"?"1":best==="SPIN"?"2":"3"} ${best}</span>`;
         indicator.classList.add("visible");
+        showingMoveHint=true;
       }
       if(dist<collisionDist){
         document.getElementById("moveIndicator").classList.remove("visible");
@@ -1142,9 +1239,24 @@ class Game{
         }
       }
     }
+    // BUGFIX: the hint used to stay stuck on screen after you'd run past the
+    // defender, because it was only ever hidden on contact.
+    if(!showingMoveHint)document.getElementById("moveIndicator").classList.remove("visible");
   }
   
-  loseLife(){this.lives--;audio.loseLife();this.camera.addShake(.5);if(this.lives<=0)this.gameOver();else this.showPost(false)}
+  // Single funnel for every way a play can end. Guarded so it can only fire once.
+  endPlay(reason){
+    if(this.state!=="PLAY")return;
+    document.getElementById("moveIndicator").classList.remove("visible");
+    document.getElementById("passIndicator").classList.remove("visible");
+    if(reason==="TD"){this.showPost(true,"TD");return}
+    // An incompletion is just a dead down - it should NOT cost you a life.
+    if(reason==="INCOMPLETE"){this.showPost(false,"INCOMPLETE");return}
+    this.lives--;audio.loseLife();this.camera.addShake(.5);
+    if(this.lives<=0)this.gameOver();else this.showPost(false,reason);
+  }
+
+  loseLife(){this.endPlay("TACKLED")}
   
   gameOver(){
     this.state="GAMEOVER";
@@ -1155,21 +1267,31 @@ class Game{
     document.getElementById("gameOverOverlay").classList.add("visible");
   }
   
-  showPost(won){
+  showPost(won,reason="TACKLED"){
     this.state="POST";
+    const titleEl=document.getElementById("postTitle");
+    let subtitle;
     if(won){
       this.score+=this.roundScore;this.totalBrokenTackles+=this.roundBrokenTackles;
-      document.getElementById("postTitle").textContent="TOUCHDOWN!";
-      document.getElementById("postTitle").style.color="var(--primary)";
+      titleEl.textContent="TOUCHDOWN!";titleEl.style.color="var(--primary)";
       document.getElementById("btnNextRound").textContent="NEXT ROUND";
+      subtitle="You beat the defense!";
     }else{
       audio.fail();
-      document.getElementById("postTitle").textContent="TACKLED!";
-      document.getElementById("postTitle").style.color="var(--secondary)";
       document.getElementById("btnNextRound").textContent="TRY AGAIN";
+      if(reason==="INCOMPLETE"){
+        titleEl.textContent="INCOMPLETE";titleEl.style.color="var(--gold)";
+        subtitle="Pass fell incomplete - no life lost";
+      }else if(reason==="INTERCEPTED"){
+        titleEl.textContent="INTERCEPTED!";titleEl.style.color="var(--secondary)";
+        subtitle=`${this.lives} ${this.lives===1?"life":"lives"} remaining`;
+      }else{
+        titleEl.textContent="TACKLED!";titleEl.style.color="var(--secondary)";
+        subtitle=`${this.lives} ${this.lives===1?"life":"lives"} remaining`;
+      }
     }
     this.renderLives("postLives");
-    document.getElementById("postSubtitle").textContent=won?"You beat the defense!":`${this.lives} ${this.lives===1?"life":"lives"} remaining`;
+    document.getElementById("postSubtitle").textContent=subtitle;
     document.getElementById("postScore").textContent=this.score;
     document.getElementById("postStats").innerHTML=`<div style="color:rgba(255,255,255,0.6)">Round ${this.round} • ${yardLine(this.player?.y||FIELD.startY)} yards • ${this.roundBrokenTackles} broken tackle${this.roundBrokenTackles!==1?"s":""}</div>`;
     this.wonRound=won;
@@ -1212,11 +1334,14 @@ class Game{
     if(this.state!=="PLAY"||!this.player)return;
     this.roundTime+=dt;
     const input=this.getInput();
+    const wrHasBall=!!(this.receiver&&this.receiver.hasBall);
     if(input.move&&this.player.hasBall)this.player.doMove(input.move,this.particles);
     if(input.pass)this.tryPass();
-    this.player.update(dt,input);
+    // Once the WR catches it, YOU drive the WR. Previously he ran straight
+    // upfield on autopilot while you were still steering a QB with no ball.
+    this.player.update(dt,wrHasBall?{dir:v2(),sprint:false}:input);
     if(this.blocker)this.blocker.update(dt,this.defenders,this.particles);
-    if(this.receiver)this.receiver.update(dt,this.defenders);
+    if(this.receiver)this.receiver.update(dt,this.defenders,wrHasBall?input:null);
     if(this.football)this.football.update(dt);
     this.defenders.forEach(d=>d.update(dt,this.player,this.receiver));
     this.checkCollisions();
@@ -1227,8 +1352,12 @@ class Game{
     
     let ballCarrier=this.player;
     if(this.receiver&&this.receiver.hasBall)ballCarrier=this.receiver;
-    if(ballCarrier.y<=FIELD.endY){this.particles.td(ballCarrier.x,ballCarrier.y);audio.touchdown();this.roundScore+=500;this.showPost(true)}
-    if(ballCarrier.x<FIELD.pad+.5||ballCarrier.x>FIELD.w-FIELD.pad-.5)this.loseLife();
+    // BUGFIX: you used to be able to throw the ball away and then walk into the
+    // end zone empty-handed for a touchdown.
+    if(ballCarrier.hasBall&&ballCarrier.y<=FIELD.endY){
+      this.particles.td(ballCarrier.x,ballCarrier.y);audio.touchdown();
+      this.roundScore+=500;this.endPlay("TD");return;
+    }
     document.getElementById("hudRound").textContent=this.round;
     document.getElementById("hudScore").textContent=this.score+this.roundScore;
     document.getElementById("hudYard").textContent=yardLine(ballCarrier.y);
@@ -1238,24 +1367,24 @@ class Game{
     // WR status
     if(this.receiver){
       let status="RUNNING "+this.receiver.route;
-      if(this.receiver.hasBall)status="HAS BALL!";
+      if(this.receiver.hasBall)status="YOU'RE THE WR - RUN!";
       else if(this.receiver.openness>.6)status="OPEN! Press 4";
       else if(this.receiver.openness>.3)status="GETTING OPEN...";
       else status="COVERED";
       document.getElementById("hudWrStatus").textContent=status;
-      document.getElementById("hudWrStatus").style.color=this.receiver.openness>.6?"#00ff88":this.receiver.openness>.3?"#ffcc00":"#ff3366";
+      document.getElementById("hudWrStatus").style.color=this.receiver.hasBall?"#ff9500":this.receiver.openness>.6?"#00ff88":this.receiver.openness>.3?"#ffcc00":"#ff3366";
     }
     
     // Pass indicator
     const passInd=document.getElementById("passIndicator");
     if(this.receiver&&this.player.hasBall&&!this.football){
-      if(this.receiver.openness>.5){passInd.innerHTML="🏈 Press <b>4</b> to PASS!";passInd.classList.add("visible")}
+      if(this.receiver.openness>.5&&this.receiver.routeTimer>.7){passInd.innerHTML="🏈 Press <b>4</b> to PASS!";passInd.classList.add("visible")}
       else{passInd.classList.remove("visible")}
     }else{passInd.classList.remove("visible")}
   }
   
   render(){
-    ctx.fillStyle="#0a1015";ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle="#0a1015";ctx.fillRect(0,0,VIEW.w,VIEW.h);
     if(this.state==="PLAY"&&this.player){
       drawField(ctx,this.camera);
       this.defenders.forEach(d=>drawDefender(ctx,this.camera,d));
@@ -1270,10 +1399,14 @@ class Game{
   frame(){
     const t=now();const frameTime=clamp(t-this.lastT,0,.05);this.lastT=t;
     this.acc+=frameTime;
-    while(this.acc>=DT){this.update(DT);this.acc-=DT}
+    let ticks=0;
+    while(this.acc>=DT&&ticks<5){this.update(DT);this.acc-=DT;ticks++}
+    if(ticks>=5)this.acc=0; // don't spiral if the tab was backgrounded
     this.render();
-    // Clear just-pressed keys at end of frame
-    Object.keys(KEYS_JUST).forEach(k=>KEYS_JUST[k]=false);
+    // BUGFIX: this used to clear unconditionally. On a 120/144Hz display most
+    // frames run ZERO update ticks, so keypresses were wiped before update()
+    // ever saw them - menus and ENTER felt randomly unresponsive.
+    if(ticks>0)Object.keys(KEYS_JUST).forEach(k=>KEYS_JUST[k]=false);
     requestAnimationFrame(()=>this.frame());
   }
   
