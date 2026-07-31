@@ -4,7 +4,7 @@ A browser-based **arcade American football game** — dodge defenders, pass to y
 wide receiver, and score touchdowns. Built as a single self-contained HTML file
 with a Node/Vm harness for regression checks.
 
-![Open Field V7 start screen](screenshots/menu.png)
+![Open Field V7 start screen](docs/images/v7-hero-menu.png)
 
 ## Features
 - Neon cyberpunk launch menu with lives + stamina HUD
@@ -32,16 +32,19 @@ open open_field_v6.html
 
 ## Project structure
 ```
-├── open_field_v6.html     # Latest playable build = Open Field V7
-├── harness.js              # Headless harness for automated checks
-├── test.js                 # Legacy harness tests
-├── scripts/verify-v7.mjs   # V7 feature verification
-├── package.json            # Script runner wrapper
-└── CHANGELOG.md            # Release notes
+├── open_field_v6.html        # Latest playable build = Open Field V7
+├── harness.js                 # Headless harness for automated checks
+├── test.js                    # Legacy harness tests
+├── scripts/verify-v7.cjs      # V7 feature verification
+├── package.json               # Script runner wrapper
+├── CHANGELOG.md               # Release notes
+└── docs/images/               # Screenshots
 ```
 
-## Screenshots
-- Start screen: `screenshots/menu.png`
+## Screenshots / Visual Walkthrough
+- `docs/images/v7-hero-menu.png` — V7 start screen with controls
+- `docs/images/v7-upgrade-scout.png` — Skill upgrade screen
+- `docs/images/v7-core-workflow.png` — Round start / HUD state
 
 ## Project status
 Functional / Tested
