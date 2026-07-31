@@ -10,11 +10,14 @@ Agents may read it. If an agent believes anything here is wrong, it must report 
 
 ```
 1v1-Football-Start/
-├── open_field_v6.html          # Playable build; target for V7 merge
-├── harness.js                  # Node/Vm harness driving DOM/stubbed browser
-├── test.js                     # Harness tests
+├── open_field_v6.html        # Playable build; target for V7 merge
+├── harness.js                 # Node/Vm harness driving DOM/stubbed browser
+├── test.js                    # Harness tests
+├── scripts/verify-v7.cjs      # V7 mechanical verification
+├── package.json               # Script runner wrapper
+├── CHANGELOG.md               # Release notes
 ├── docs/
-│   ├── preflight.md            # KNOW / ASSUME / BLIND + verdict
+│   ├── preflight.md            # KNOW / ASSUME / BLIND + verdict + ship graph
 │   ├── acceptance.md           # Frozen V1 scope
 │   └── contract.md             # This file
 └── README.md                   # Shipped README
@@ -78,3 +81,29 @@ type State = "MENU" | "UPGRADE" | "SCOUT" | "PLAY" | "POST" | "GAMEOVER";
 - Incomplete passes do not cost a life
 - Interceptions / tackles cost one life
 - End-zone touchdown ends round as win
+
+## Ship workflow — fake-edge rules
+
+This repo uses the graph-style ship workflow from the article
+**Graph Engineering explained: what it is, when to use it and when not to**.
+
+### Fake-edge test
+Before sequencing two steps, ask: *does the second step actually need the first step's output?*
+- If **yes** → keep the edge.
+- If **no** → run them in parallel or collapse them.
+
+### Real edges in this repo's ship graph
+1. **Wave 0 → Wave 1**: baseline must exist before the feature port, otherwise diff has no floor.
+2. **Wave 1 → Wave 2**: verification must test the actual ported code, not the baseline.
+3. **Wave 2 → Ship**: do not ship unverified work; tests and mechanical checks must pass.
+
+### Edges explicitly removed as fake
+1. `docs/acceptance.md` does not wait for `docs/preflight.md` — they are independent Wave -1 artifacts.
+2. `docs/contract.md` does not wait for both docs — it is owned by the orchestrator and can be drafted in parallel.
+3. `README.md` draft can be written in Wave 1; only the **evidence/status** section waits for Wave 2 test output.
+4. Screenshots can be captured during Wave 2 while the local server is already running; they do not need a clean ship-state commit first.
+
+### Diamond pattern used here
+- **Fan out**: Wave -1 docs, Wave 1 feature port, Wave 2 verification docs
+- **Reduce**: plain code / harness runs, not in-chat summarization
+- **Synthesize**: orchestrator integrates agent outputs into final commit
