@@ -1,0 +1,16 @@
+{
+  "name": "1v1-football-start",
+  "version": "1.0.0",
+  "private": true,
+  "description": "1v1 Football (Open Field) — browser arcade game with harnessed tests.",
+  "scripts": {
+    "test": "node test.js && node scripts/verify-v7.mjs",
+    "verify:v7": "node scripts/verify-v7.mjs"
+  },
+  "license": "MIT",
+  "keywords": [
+    "game",
+    "football",
+    "html"
+  ]
+}
