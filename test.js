@@ -33,7 +33,7 @@ console.log('\n=== 2. Throwing a pass always resolves (no zombie play) ===');
     const g = startPlay();
     g.key('KeyW');                 // run upfield
     g.step(60);                    // ~1s so the route develops
-    g.tap('Digit4');               // THROW
+    g.tap('Digit5');               // THROW TO WR1
     g.step(1200);                   // let it fully play out
     const title = g.getText('postTitle') || 'NO_RESOLUTION';
     results[title] = (results[title] || 0) + 1;
