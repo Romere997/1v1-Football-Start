@@ -107,6 +107,19 @@ canvas{border-radius:12px;box-shadow:0 0 60px rgba(0,255,136,0.15),0 25px 80px r
 .defender-bar{height:100%;width:100%;border-radius:3px}
 .defender-counter{font-size:10px;color:#00ff88;margin-top:4px}
 .defender-gassed{font-size:9px;color:#ff8866;margin-top:2px;opacity:.85}
+.call-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:10px 0}
+.call-slot{position:relative;width:76px;padding:10px 6px;border-radius:10px;text-align:center;cursor:pointer;border:2px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.35);transition:all .2s}
+.call-slot:hover{border-color:var(--accent)}
+.call-slot.focused{border-color:var(--gold);background:rgba(255,215,0,0.12);box-shadow:0 0 16px rgba(255,215,0,0.3);transform:scale(1.05)}
+.call-slot .slot-label{font-size:8px;color:rgba(255,255,255,0.55);letter-spacing:1px}
+.call-slot .slot-num{font-family:'Orbitron',monospace;font-size:16px;font-weight:900;margin:3px 0}
+.call-slot .slot-opt{font-size:10px;font-weight:700;color:var(--accent)}
+.call-slot.wr .slot-num{color:var(--receiver)}
+.call-slot.ol .slot-num{color:var(--blocker)}
+.wheel{position:absolute;top:calc(100% + 10px);left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid rgba(255,215,0,0.35);border-radius:12px;padding:6px;z-index:5;display:flex;flex-direction:column;gap:4px;min-width:92px;box-shadow:0 8px 24px rgba(0,0,0,0.6)}
+.wheel-opt{padding:4px 8px;border-radius:6px;font-size:10px;font-family:'Orbitron',monospace;font-weight:700;color:rgba(255,255,255,0.65);cursor:pointer;text-align:center;transition:all .15s}
+.wheel-opt:hover{background:rgba(255,255,255,0.08)}
+.wheel-opt.active{background:var(--gold);color:var(--dark)}
 </style>
 </head>
 <body>
@@ -184,8 +197,24 @@ canvas{border-radius:12px;box-shadow:0 0 60px rgba(0,255,136,0.15),0 25px 80px r
 <div class="strategy-row">Drain a defender to <b>GASSED</b> and he loses his special ability.</div>
 <div class="strategy-row">When you get wrapped up, <b>mash the counter move</b> before the red clock runs out.</div>
 </div>
-<div class="btn-row"><button class="btn" id="btnStartRound">🏈 START ROUND</button></div>
-<div class="kb-hint">Press ENTER or SPACE to start</div>
+<div class="btn-row"><button class="btn" id="btnStartRound">🏈 SET OFFENSIVE CALLS →</button></div>
+<div class="kb-hint">Press ENTER to set offensive calls</div>
+</div>
+</div>
+<div class="overlay" id="callsOverlay">
+<div class="panel">
+<div style="text-align:center"><div class="round-badge" id="callsRoundBadge">ROUND 1</div><div class="panel-title">OFFENSIVE CALLS</div><div class="panel-subtitle" id="callsSubtitle">Choose each blocker's scheme and each WR's route</div></div>
+<div class="strategy-box">
+<div class="strategy-title">🛡️ BLOCKING (choose per lineman)</div>
+<div class="call-row" id="olCallsRow"></div>
+<div class="strategy-title">🏈 ROUTES (choose per receiver)</div>
+<div class="call-row" id="wrCallsRow"></div>
+<div class="strategy-row" style="margin-top:8px"><span class="strategy-key">↑↓</span> Move focus</div>
+<div class="strategy-row"><span class="strategy-key">←→</span> Change that player's call</div>
+<div class="strategy-row"><span class="strategy-key">ENTER</span> Lock calls &amp; start</div>
+</div>
+<div class="btn-row"><button class="btn" id="btnStartRound2">🏈 START ROUND</button></div>
+<div class="kb-hint">Press ENTER to start the round with these calls</div>
 </div>
 </div>
 <div class="overlay" id="postOverlay">
@@ -387,7 +416,7 @@ class Particles{
 
 // ============ CAMERA ============
 class Camera{
-  constructor(){this.x=FIELD.w/2;this.y=FIELD.startY;this.zoom=5.2;this.shake={x:0,y:0,t:0}}
+  constructor(){this.x=FIELD.w/2;this.y=FIELD.startY;this.zoom=8.5;this.shake={x:0,y:0,t:0}}
   follow(target,dt){this.x=lerp(this.x,target.x,5*dt);this.y=lerp(this.y,target.y-6,5*dt);this.shake.t=Math.max(0,this.shake.t-dt*2.5);const tr=this.shake.t*this.shake.t;this.shake.x=(Math.random()*2-1)*tr*.5;this.shake.y=(Math.random()*2-1)*tr*.5}
   addShake(a){this.shake.t=clamp(this.shake.t+a,0,1)}
   toScreen(wx,wy){return{x:VIEW.w/2+(wx-this.x+this.shake.x)*this.zoom,y:VIEW.h/2+(wy-this.y+this.shake.y)*this.zoom}}
@@ -564,6 +593,12 @@ class WideReceiver{
     this.routeTimer=0;
     return this.route;
   }
+  setRoute(route){
+    // Pre-snap call: force a specific route for this receiver.
+    this.route=route||"SLANT";
+    this.routeTimer=0;
+    return this.route;
+  }
   getRouteTarget(){
     const t=this.routeTimer;const depth=14+t*9;
     let targetX=this.startX,targetY=this.startY-depth;
@@ -661,33 +696,66 @@ class Football{
 
 // ============ OFFENSIVE LINEMAN ============
 class OLineman{
-  constructor(idx,qb){
+  constructor(idx,qb,blockMode){
     this.idx=idx;this.qb=qb;this.number=OL_NUMBERS[idx];
+    this.blockMode=blockMode||"BLOCK"; // BLOCK | PULL_L | PULL_R (pre-snap call)
     const spread=[-8.5,-4.3,0,4.3,8.5][idx];
     this.x=FIELD.w/2+spread;this.y=LOS;
+    // PULL calls slide the lineman to the declared side of the pocket BEFORE
+    // the snap, so he is already in position to pick up a blitzer there.
+    if(this.blockMode==="PULL_L")this.x=FIELD.w/2-7;
+    if(this.blockMode==="PULL_R")this.x=FIELD.w/2+7;
     this.vx=0;this.vy=0;this.radius=1.5;this.facing=v2(0,-1);
     this.speed=6.4;this.accel=38;this.legPhase=0;
     this.maxStamina=130;this.stamina=this.maxStamina;
     this.assign=null;this.engaged=null;this.lockout=0;this.shoveAnim=0;
+    this.hunting=false;this.huntTarget=null;
   }
-  update(dt,particles){
+  update(dt,particles,defenders){
     this.lockout=Math.max(0,this.lockout-dt);
     this.shoveAnim=Math.max(0,this.shoveAnim-dt*3);
-    const d=this.assign;
+    let d=this.assign;
+    // Free OLs hunt the nearest threat to the QB - back-seven blitzers and
+    // d-linemen who slipped their block - so blitzers get picked up instead
+    // of running past the pocket untouched. The hunt target is held until it
+    // dies, so the OL commits instead of churning targets every frame.
+    this.hunting=false;
+    if(!this.engaged&&(!d||d.beaten||d.blockedBy||(d.shed>0))){
+      if(this.huntTarget&&(this.huntTarget.beaten||this.huntTarget.blocked||this.huntTarget.stun>0||this.huntTarget.blockedBy||vDist(this.qb,this.huntTarget)>26)){
+        this.huntTarget=null;
+      }
+      if(!this.huntTarget){
+        let best=null,bd=Infinity;
+        for(const dd of defenders||[]){
+          if(dd.beaten||dd.blocked||dd.stun>0||dd.blockedBy)continue;
+          const threatDist=vDist(this.qb,dd);
+          if(threatDist>26)continue;
+          const dist=vDist(this,dd);
+          if(dist<bd){bd=dist;best=dd}
+        }
+        this.huntTarget=best;
+      }
+      if(this.huntTarget){d=this.huntTarget;this.hunting=true}
+    }else{
+      this.huntTarget=null;
+    }
     let tx,ty;
     if(d&&!d.beaten){
-      // Get between the rusher and the quarterback.
+      // Get between the rusher and the quarterback, leading his movement so
+      // fast blitzers can't just run around the block. Hunters run harder.
       const toQB=vNorm(vSub(this.qb,d));
-      tx=d.x+toQB.x*1.7;ty=d.y+toQB.y*1.7;
+      const leadX=d.vx*(this.hunting?.45:.25),leadY=d.vy*(this.hunting?.45:.25);
+      tx=d.x+leadX+toQB.x*1.7;ty=d.y+leadY+toQB.y*1.7;
     }else{
       tx=this.qb.x+(this.x-FIELD.w/2)*.35;ty=this.qb.y-4.5;
     }
     const dx=tx-this.x,dy=ty-this.y,dist=Math.hypot(dx,dy);
     const sf=this.stamina<35?.55+this.stamina/35*.45:1;
+    const huntBoost=this.hunting?1.35:1;
     if(dist>.4&&!this.engaged){
       const dir=vNorm(v2(dx,dy));
-      this.vx=lerp(this.vx,dir.x*this.speed*sf,this.accel*dt/10);
-      this.vy=lerp(this.vy,dir.y*this.speed*sf,this.accel*dt/10);
+      this.vx=lerp(this.vx,dir.x*this.speed*sf*huntBoost,this.accel*dt/10);
+      this.vy=lerp(this.vy,dir.y*this.speed*sf*huntBoost,this.accel*dt/10);
     }else{this.vx*=.85;this.vy*=.85}
     this.x+=this.vx*dt;this.y+=this.vy*dt;
     this.x=clamp(this.x,FIELD.pad+this.radius,FIELD.w-FIELD.pad-this.radius);
@@ -801,15 +869,19 @@ class Defender{
     }
     if(!carrier)return;
     // CORNER shadows a receiver until the ball is caught - unless he's gassed.
-    const qbScrambling=carrier.isQB&&carrier.hasBall&&carrier.y<LOS-1;
-    if(this.type.behavior==="COVER"&&!this.gassed&&!qbScrambling&&receivers&&receivers.length&&carrier.isQB){
+    // He keeps his assignment even when the QB scrambles (other defenders
+    // handle the QB) so receivers never leak open behind the coverage.
+    if(this.type.behavior==="COVER"&&!this.gassed&&receivers&&receivers.length){
       if(!this.coverTarget||this.coverTarget.hasBall||this.coverTarget.down){
         this.coverTarget=receivers.filter(r=>!r.hasBall&&!r.down)
           .sort((a,b)=>vDist(this,a)-vDist(this,b))[0]||null;
       }
       if(this.coverTarget){
-        this.target.x=this.coverTarget.x+this.coverTarget.vx*.35;
-        this.target.y=this.coverTarget.y+this.coverTarget.vy*.35+1;
+        const wr=this.coverTarget;
+        // Stay tight: mirror the receiver's movement, sit slightly ahead.
+        const lead=wr.vx*.55,leadY=wr.vy*.55-1;
+        this.target.x=wr.x+lead;
+        this.target.y=wr.y+leadY;
         return;
       }
     }
@@ -1082,6 +1154,8 @@ class Game{
     this.football=null;this.particles=new Particles;this.camera=new Camera;
     this.roundTime=0;this.roundScore=0;this.roundBrokenTackles=0;this.totalBrokenTackles=0;
     this.lastT=now();this.acc=0;this.wonRound=false;this.assignTimer=0;
+    this.calls={ol:["BLOCK","BLOCK","BLOCK","BLOCK","BLOCK"],wr:["SLANT","POST","STREAK"]};
+    this.callFocus=0;
     this.updateHSDisplay();
   }
   updateHSDisplay(){const el=document.getElementById("highScoreDisplay");if(el&&this.highScore>0)el.textContent=`🏆 HIGH SCORE: ${this.highScore}`}
@@ -1175,16 +1249,94 @@ class Game{
     document.getElementById("scoutOverlay").classList.add("visible");
   }
 
+  showCalls(){
+    this.state="CALLS";this.callFocus=0;
+    document.getElementById("scoutOverlay").classList.remove("visible");
+    document.getElementById("callsRoundBadge").textContent=`ROUND ${this.round}`;
+    this.renderCalls();
+    document.getElementById("callsOverlay").classList.add("visible");
+  }
+
+  renderCalls(){
+    const OL_MODES=["BLOCK","PULL_L","PULL_R"];
+    const olRow=document.getElementById("olCallsRow");olRow.innerHTML="";
+    const wrRow=document.getElementById("wrCallsRow");wrRow.innerHTML="";
+    // 8 focusable slots: 5 OL then 3 WR.
+    for(let i=0;i<5;i++){
+      const slot=document.createElement("div");
+      slot.className="call-slot ol"+(this.callFocus===i?" focused":"");
+      slot.innerHTML=`<div class="slot-label">OL #${OL_NUMBERS[i]}</div><div class="slot-num">${OL_NUMBERS[i]}</div><div class="slot-opt">${this.calls.ol[i]}</div>`;
+      slot.addEventListener("click",()=>{this.callFocus=i;this.renderCalls();audio.menuSelect()});
+      olRow.appendChild(slot);
+    }
+    for(let i=0;i<3;i++){
+      const j=5+i;
+      const slot=document.createElement("div");
+      slot.className="call-slot wr"+(this.callFocus===j?" focused":"");
+      slot.innerHTML=`<div class="slot-label">WR #${WR_NUMBERS[i]}</div><div class="slot-num">${WR_NUMBERS[i]}</div><div class="slot-opt">${this.calls.wr[i]}</div>`;
+      slot.addEventListener("click",()=>{this.callFocus=j;this.renderCalls();audio.menuSelect()});
+      wrRow.appendChild(slot);
+    }
+    // Wheel for the focused player.
+    const f=this.callFocus;
+    let opts,cur,row;
+    if(f<5){opts=OL_MODES;cur=this.calls.ol[f];row=olRow.children[f]}
+    else{const k=f-5;opts=ROUTE_SET;cur=this.calls.wr[k];row=wrRow.children[k]}
+    const wheel=document.createElement("div");wheel.className="wheel";
+    opts.forEach(o=>{
+      const opt=document.createElement("div");
+      opt.className="wheel-opt"+(o===cur?" active":"");
+      opt.textContent=o;
+      opt.addEventListener("click",()=>{
+        if(f<5)this.calls.ol[f]=o;else this.calls.wr[f-5]=o;
+        audio.menuSelect();this.renderCalls();
+      });
+      wheel.appendChild(opt);
+    });
+    row.appendChild(wheel);
+  }
+
+  handleCallsInput(){
+    const total=8;
+    if(consumeKey("ArrowUp")||consumeKey("KeyW")){
+      this.callFocus=(this.callFocus-1+total)%total;audio.menuMove();this.renderCalls();
+    }else if(consumeKey("ArrowDown")||consumeKey("KeyS")){
+      this.callFocus=(this.callFocus+1)%total;audio.menuMove();this.renderCalls();
+    }
+    if(consumeKey("ArrowLeft")||consumeKey("KeyA")){
+      this.cycleCall(-1);
+    }else if(consumeKey("ArrowRight")||consumeKey("KeyD")){
+      this.cycleCall(1);
+    }
+    if(consumeKey("Enter")||consumeKey("Space")){this.startRound()}
+  }
+
+  cycleCall(dir){
+    const OL_MODES=["BLOCK","PULL_L","PULL_R"];
+    const f=this.callFocus;
+    if(f<5){
+      const i=OL_MODES.indexOf(this.calls.ol[f]);
+      this.calls.ol[f]=OL_MODES[(i+dir+OL_MODES.length)%OL_MODES.length];
+    }else{
+      const k=f-5;
+      const i=ROUTE_SET.indexOf(this.calls.wr[k]);
+      this.calls.wr[k]=ROUTE_SET[(i+dir+ROUTE_SET.length)%ROUTE_SET.length];
+    }
+    audio.menuMove();this.renderCalls();
+  }
+
   startRound(){
+    document.getElementById("callsOverlay").classList.remove("visible");
     document.getElementById("scoutOverlay").classList.remove("visible");
     this.state="PLAY";
     this.player=new Player(this.skills);
     this.receivers=[0,1,2].map(i=>new WideReceiver(i,this.skills));
-    const taken=[];this.receivers.forEach(r=>taken.push(r.pickRoute(taken)));
-    this.oline=[0,1,2,3,4].map(i=>new OLineman(i,this.player));
+    // Apply pre-snap calls: fixed routes per receiver.
+    this.receivers.forEach((r,i)=>r.setRoute(this.calls.wr[i]));
+    this.oline=[0,1,2,3,4].map(i=>new OLineman(i,this.player,this.calls.ol[i]));
     this.football=null;this.assignTimer=0;
     this.roundTime=0;this.roundScore=0;this.roundBrokenTackles=0;
-    this.camera.x=FIELD.w/2;this.camera.y=FIELD.startY;this.camera.zoom=5.2;
+    this.camera.x=FIELD.w/2;this.camera.y=FIELD.startY;this.camera.zoom=8.5;
     this.particles.list=[];
     this.renderHudLives();
     document.getElementById("moveIndicator").classList.remove("visible");
@@ -1250,21 +1402,48 @@ class Game{
   }
 
   assignBlocks(){
-    const used=new Set();
-    for(const d of this.dline){
-      let best=null,bd=Infinity;
-      for(const o of this.oline){
-        if(used.has(o))continue;
-        const dist=vDist(o,d);
-        if(dist<bd){bd=dist;best=o}
-      }
-      if(best){best.assign=d;used.add(best)}
-    }
+    const qb=this.player;
+    // Threats = d-linemen + back-seven defenders who have come downhill to rush.
+    // A back-seven defender is "blitzing" once he's within ~24 units of the QB.
+    const threats=this.dline.concat(
+      this.defenders.filter(d=>!d.beaten&&!d.blocked&&d.stun<=0&&d.blockedBy==null&&vDist(d,qb)<24)
+    );
+    // Keep existing commitments: an OL stays on his man until the block dies.
+    // This is the fix for blockers never picking anyone up - the old code
+    // re-assigned every 0.35s so nobody ever committed to a blitzer.
+    // NOTE: blockedBy can point at the OL himself (his own engagement) - that
+    // must NOT clear the assignment, only another blocker or a shed does.
     for(const o of this.oline){
-      if(used.has(o))continue;
+      const a=o.assign;
+      if(!a||a.beaten||a.shed>0||(a.blockedBy&&a.blockedBy!==o)||vDist(a,qb)>28){
+        o.assign=null;
+      }
+    }
+    const used=new Set(this.oline.filter(o=>o.assign).map(o=>o.assign));
+    // PULL linemen commit to their declared side and take ONLY threats there
+    // (a pulled blocker is off the line - his job is the blitzer, not the D-line).
+    const pullers=this.oline.filter(o=>!o.assign&&(o.blockMode==="PULL_L"||o.blockMode==="PULL_R"));
+    for(const o of pullers){
       let best=null,bd=Infinity;
-      for(const d of this.dline){const dist=vDist(o,d);if(dist<bd){bd=dist;best=d}}
-      o.assign=best;
+      for(const t of threats){
+        if(used.has(t))continue;
+        const onSide=o.blockMode==="PULL_L"?t.x<qb.x:t.x>qb.x;
+        if(!onSide)continue;
+        const dist=vDist(o,t);
+        if(dist<bd){bd=dist;best=t}
+      }
+      if(best){o.assign=best;used.add(best)}
+    }
+    // Everyone else (BLOCK) takes the nearest remaining threat, D-line first.
+    for(const o of this.oline){
+      if(o.assign)continue;
+      let best=null,bd=Infinity;
+      for(const t of threats){
+        if(used.has(t))continue;
+        const dist=vDist(o,t);
+        if(dist<bd){bd=dist;best=t}
+      }
+      if(best){o.assign=best;used.add(best)}
     }
   }
 
@@ -1308,7 +1487,9 @@ class Game{
     const ballLive=this.player.hasBall;
     for(const def of this.allDefenders()){
       if(def.beaten||def.blocked||def.stun>0)continue;
-      if(def.type.behavior==="RUSH"&&(!def.pursuing||(def.blockedBy&&def.shed<=0)))continue;
+      // Anyone being blocked right now is out of the play until the block sheds.
+      if(def.blockedBy&&def.shed<=0)continue;
+      if(def.type.behavior==="RUSH"&&(!def.pursuing))continue;
       if(carrier.grabbers.includes(def))continue;
       if(vDist(carrier,def)>=carrier.radius+def.radius)continue;
 
@@ -1418,7 +1599,8 @@ class Game{
     if(this.state==="MENU"){
       if(consumeKey("Enter")||consumeKey("Space")){audio.init();document.getElementById("menuOverlay").classList.remove("visible");this.reset();this.showUpgrade()}
     }else if(this.state==="UPGRADE")this.handleUpgradeInput();
-    else if(this.state==="SCOUT"){if(consumeKey("Enter")||consumeKey("Space"))this.startRound()}
+    else if(this.state==="SCOUT"){if(consumeKey("Enter")||consumeKey("Space"))this.showCalls()}
+    else if(this.state==="CALLS")this.handleCallsInput();
     else if(this.state==="POST"){
       if(consumeKey("Enter")||consumeKey("Space"))this.nextRound();
       if(consumeKey("Escape")){document.getElementById("postOverlay").classList.remove("visible");document.getElementById("menuOverlay").classList.add("visible");this.reset();this.updateHSDisplay()}
@@ -1457,10 +1639,11 @@ class Game{
 
     this.assignTimer-=dt;
     if(this.assignTimer<=0){this.assignTimer=.35;this.assignBlocks()}
-    this.oline.forEach(o=>o.update(dt,this.particles));
+    const defList=this.allDefenders();
+    this.oline.forEach(o=>o.update(dt,this.particles,defList));
 
-    const defList=this.defenders;
-    this.receivers.forEach(wr=>wr.update(dt,defList,carrier===wr?input:null));
+    const wrDefs=this.defenders;
+    this.receivers.forEach(wr=>wr.update(dt,wrDefs,carrier===wr?input:null));
     if(this.football)this.football.update(dt);
 
     const ballLive=this.player.hasBall;
@@ -1581,7 +1764,8 @@ class Game{
 const game=new Game;
 document.getElementById("btnStart")?.addEventListener("click",()=>{audio.init();document.getElementById("menuOverlay").classList.remove("visible");game.reset();game.showUpgrade()});
 document.getElementById("btnConfirmUpgrade")?.addEventListener("click",()=>game.confirmUpgrade());
-document.getElementById("btnStartRound")?.addEventListener("click",()=>game.startRound());
+document.getElementById("btnStartRound")?.addEventListener("click",()=>game.showCalls());
+document.getElementById("btnStartRound2")?.addEventListener("click",()=>game.startRound());
 document.getElementById("btnNextRound")?.addEventListener("click",()=>game.nextRound());
 document.getElementById("btnMainMenu")?.addEventListener("click",()=>{document.getElementById("postOverlay").classList.remove("visible");document.getElementById("menuOverlay").classList.add("visible");game.reset();game.updateHSDisplay()});
 document.getElementById("btnPlayAgain")?.addEventListener("click",()=>{document.getElementById("gameOverOverlay").classList.remove("visible");game.reset();game.showUpgrade()});

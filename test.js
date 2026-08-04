@@ -13,7 +13,8 @@ function startPlay() {
   g.tap('Enter');            // MENU -> UPGRADE
   g.tap('KeyR');             // enable the receiver
   g.tap('Enter');            // UPGRADE -> SCOUT
-  g.tap('Enter');            // SCOUT -> PLAY
+  g.tap('Enter');            // SCOUT -> CALLS (pre-snap)
+  g.tap('Enter');            // CALLS -> PLAY
   return g;
 }
 
@@ -109,7 +110,7 @@ console.log('\n=== 5. No touchdown without possession ===');
 console.log('\n=== 6. Rounds without the WR still play normally ===');
 {
   const g = boot();
-  g.step(2); g.tap('Enter'); g.tap('Enter'); g.tap('Enter');   // no KeyR = no receiver
+  g.step(2); g.tap('Enter'); g.tap('Enter'); g.tap('Enter'); g.tap('Enter');   // no KeyR = run-only (default calls)
   g.key('KeyW');
   g.step(1400);
   const title = g.getText('postTitle');

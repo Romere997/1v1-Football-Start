@@ -15,7 +15,8 @@ function startPlay() {
   g.tap('Enter'); // MENU -> UPGRADE
   g.tap('KeyR'); // enable WR
   g.tap('Enter'); // UPGRADE -> SCOUT
-  g.tap('Enter'); // SCOUT -> PLAY
+  g.tap('Enter'); // SCOUT -> CALLS (pre-snap)
+  g.tap('Enter'); // CALLS -> PLAY
   return g;
 }
 
@@ -53,6 +54,20 @@ function startPlay() {
   }
   const unique = new Set(names);
   assert(unique.size >= 3, `defenderPreview shows ${unique.size} unique defender types`);
+}
+
+{
+  // AC-10: pre-snap calls overlay has 5 OL slots + 3 WR slots.
+  const g = boot();
+  g.step(2);
+  g.tap('Enter'); // UPGRADE
+  g.tap('Enter'); // SCOUT
+  g.tap('Enter'); // CALLS
+  g.step(10);
+  const olSlots = (g.els['olCallsRow'] && g.els['olCallsRow'].children) || [];
+  const wrSlots = (g.els['wrCallsRow'] && g.els['wrCallsRow'].children) || [];
+  assert(olSlots.length === 5, `calls overlay shows 5 OL slots (actual=${olSlots.length})`);
+  assert(wrSlots.length === 3, `calls overlay shows 3 WR slots (actual=${wrSlots.length})`);
 }
 
 {
