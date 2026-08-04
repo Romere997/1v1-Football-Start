@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
-<title>Open Field V6</title>
+<title>Openfield Football</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap');
 :root{--primary:#00ff88;--secondary:#ff3366;--accent:#00d4ff;--gold:#ffd700;--dark:#0a0e14;--darker:#060810;--panel:rgba(10,14,20,0.92);--blocker:#4a90d9;--stamina:#ffdd00;--receiver:#ff9500}
@@ -146,8 +146,8 @@ canvas{border-radius:12px;box-shadow:0 0 60px rgba(0,255,136,0.15),0 25px 80px r
 </div>
 <div class="overlay visible" id="menuOverlay">
 <div class="panel" style="text-align:center">
-<div class="panel-title">🏈 OPEN FIELD V7</div>
-<div class="panel-subtitle">5 O-line. 3 rushers. 3 receivers. Fight through tackles.</div>
+<div class="panel-title">🏈 OPENFIELD FOOTBALL</div>
+<div class="panel-subtitle">Beat defenders. Pass to WR. Score touchdowns.</div>
 <div class="lives-display"><span class="life">❤️</span><span class="life">❤️</span><span class="life">❤️</span></div>
 <div style="color:rgba(255,255,255,0.5);font-size:12px;margin-bottom:15px">Stamina is your speed AND your ability to survive a hit.</div>
 <div class="strategy-box" style="text-align:left;max-width:300px;margin:15px auto">
@@ -311,7 +311,9 @@ const DEF_TYPES={
   CORNER:{name:"CORNER",color:"#ff00ff",number:24,speed:9.2,accel:52,grip:5.5,pursuit:8.5,size:1.00,maxStamina:70,
     behavior:"COVER",desc:"Shadows a WR",gassed:"Coverage breaks"},
   RUSHER:{name:"RUSHER",color:"#ffd700",number:99,speed:7.6,accel:46,grip:8.5,pursuit:7,size:1.45,maxStamina:95,
-    behavior:"RUSH",desc:"Rushes the QB",gassed:"Rush goes dead"}
+    behavior:"RUSH",desc:"Rushes the QB",gassed:"Rush goes dead"},
+  LOB:{name:"LOB",color:"#facc15",number:31,speed:8.1,accel:44,grip:7.2,pursuit:8.8,size:1.18,maxStamina:88,
+    behavior:"LOB",desc:"Tight zone, closes hard",gassed:"Zone coverage collapses"}
 };
 
 // How well each move works against each type while you're being wrapped up.
@@ -323,7 +325,8 @@ const MATCHUP={
   HITTER:   {JUKE:1.00,SPIN:0.55,TRUCK:0.25},
   HYBRID:   {SPIN:1.00,TRUCK:0.60,JUKE:0.30},
   CORNER:   {TRUCK:1.00,JUKE:0.70,SPIN:0.50},
-  RUSHER:   {SPIN:0.90,JUKE:0.70,TRUCK:0.50}
+  RUSHER:   {SPIN:0.90,JUKE:0.70,TRUCK:0.50},
+  LOB:      {JUKE:1.00,SPIN:0.65,TRUCK:0.40}
 };
 const bestMoveVs=t=>{const m=MATCHUP[t];return Object.keys(m).reduce((a,b)=>m[b]>m[a]?b:a)};
 
@@ -842,6 +845,15 @@ class Defender{
         this.target.x=b.x+toEZ.x*.4;this.target.y=b.y+toEZ.y*.4;
         break;
       }
+      case "LOB":{
+        // Holds a tight zone, then commits once the carrier is inside ~28 units.
+        this.coverTarget=null;
+        if(this.gassed){this.target.x=b.x;this.target.y=b.y+1;break}
+        const distB=vDist(this,b);
+        if(distB<28){this.target.x=b.x+b.vx*.3;this.target.y=b.y+1.2}
+        else{this.target.x=lerp(this.startX,b.x,.25);this.target.y=Math.min(this.startY,b.y+9)}
+        break;
+      }
       default:{
         const la=.25+this.type.pursuit*.03;
         this.target.x=b.x+b.vx*la;this.target.y=b.y+b.vy*la+1;
@@ -1064,7 +1076,7 @@ class Game{
     this.state="MENU";
     this.round=1;this.score=0;this.lives=3;this.maxLives=3;
     this.highScore=parseInt(localStorage.getItem("openFieldHS7")||"0");
-    this.skills={speed:5,acceleration:5,breakTackle:5,spinMove:5,agility:5,strength:5,throwPower:5,throwAccuracy:5,wrSpeed:5};
+    this.skills={speed:5,acceleration:5,breakTackle:5,spinMove:5,agility:5,strength:5,throwPower:5,throwAccuracy:5,wrSpeed:5,hands:5};
     this.selectedSkill=null;this.skillIndex=0;
     this.player=null;this.receivers=[];this.oline=[];this.dline=[];this.defenders=[];
     this.football=null;this.particles=new Particles;this.camera=new Camera;
@@ -1087,7 +1099,7 @@ class Game{
     }
     // Second level: linebackers / safeties / corners, scaling with the round.
     const count=this.getDefCount();
-    const pool=[DEF_TYPES.CORNER,DEF_TYPES.TACKLER,DEF_TYPES.SPEEDSTER,DEF_TYPES.HITTER,DEF_TYPES.HYBRID,DEF_TYPES.BALANCED];
+    const pool=[DEF_TYPES.CORNER,DEF_TYPES.TACKLER,DEF_TYPES.SPEEDSTER,DEF_TYPES.HITTER,DEF_TYPES.HYBRID,DEF_TYPES.BALANCED,DEF_TYPES.LOB];
     const spots=[
       {x:FIELD.w*.5,y:LOS-13},{x:FIELD.w*.18,y:LOS-17},{x:FIELD.w*.82,y:LOS-17},
       {x:FIELD.w*.33,y:LOS-27},{x:FIELD.w*.67,y:LOS-27},{x:FIELD.w*.5,y:LOS-40},
@@ -1108,19 +1120,19 @@ class Game{
     document.getElementById("roundBadge").textContent=`ROUND ${this.round}`;
     this.renderLives("upgradeLives");
     const grid=document.getElementById("skillGrid");grid.innerHTML="";
-    const keys=["speed","acceleration","breakTackle","spinMove","agility","strength","throwPower","throwAccuracy","wrSpeed"];
-    const names={speed:"SPEED",acceleration:"ACCEL",breakTackle:"BREAK",spinMove:"SPIN",agility:"AGILITY",strength:"STRENGTH",throwPower:"THROW PWR",throwAccuracy:"THROW ACC",wrSpeed:"WR SPEED"};
-    const wrSkills=["throwPower","throwAccuracy","wrSpeed"];
-    keys.forEach((key,idx)=>{
-      const val=this.skills[key],maxed=val>=10,isWR=wrSkills.includes(key);
-      const card=document.createElement("div");
-      card.className="skill-card"+(maxed?" maxed":"")+(idx===0?" selected":"")+(isWR?" wr-skill":"");
-      card.dataset.idx=idx;card.dataset.key=key;
-      card.innerHTML=`<div class="skill-name${isWR?" wr":""}">${names[key]}</div><div class="skill-bar-bg"><div class="skill-bar${isWR?" wr":""}" style="width:${val*10}%"></div></div><div class="skill-value">${val}/10${maxed?" MAX":""}</div>`;
-      if(!maxed)card.addEventListener("click",()=>{document.querySelectorAll(".skill-card").forEach(c=>c.classList.remove("selected"));card.classList.add("selected");this.selectedSkill=key;this.skillIndex=idx;audio.init();audio.menuSelect()});
-      grid.appendChild(card);
-    });
-    this.selectedSkill=keys[0];
+    const skillKeys=["speed","acceleration","breakTackle","spinMove","agility","strength","throwPower","throwAccuracy","wrSpeed","hands"];
+    const skillNames={speed:"SPEED",acceleration:"ACCEL",breakTackle:"BREAK",spinMove:"SPIN",agility:"AGILITY",strength:"STRENGTH",throwPower:"THROW PWR",throwAccuracy:"THROW ACC",wrSpeed:"WR SPEED",hands:"HANDS"};
+    const wrSkills=["throwPower","throwAccuracy","wrSpeed","hands"];
+        skillKeys.forEach((key,idx)=>{
+          const val=this.skills[key],maxed=val>=10,isWR=wrSkills.includes(key);
+          const card=document.createElement("div");
+          card.className="skill-card"+(maxed?" maxed":"")+(idx===0?" selected":"")+(isWR?" wr-skill":"");
+          card.dataset.idx=idx;card.dataset.key=key;
+          card.innerHTML=`<div class="skill-name${isWR?" wr":""}">${skillNames[key]}</div><div class="skill-bar-bg"><div class="skill-bar${isWR?" wr":""}" style="width:${val*10}%"></div></div><div class="skill-value">${val}/10${maxed?" MAX":""}</div>`;
+          if(!maxed)card.addEventListener("click",()=>{document.querySelectorAll(".skill-card").forEach(c=>c.classList.remove("selected"));card.classList.add("selected");this.selectedSkill=key;this.skillIndex=idx;audio.init();audio.menuSelect()});
+          grid.appendChild(card);
+        });
+        this.selectedSkill=skillKeys[0];
     document.getElementById("upgradeOverlay").classList.add("visible");
   }
   handleUpgradeInput(){
@@ -1263,7 +1275,7 @@ class Game{
       if(wr&&!wr.hasBall&&!wr.down&&!this.football.catchAttempted){
         if(vDist(this.football,wr)<wr.radius+2){
           this.football.catchAttempted=true;
-          const chance=clamp(.62+wr.openness*.28+this.skills.throwAccuracy*.012+this.skills.wrSpeed*.005,.45,.97);
+          const chance=clamp(.62+wr.openness*.28+this.skills.throwAccuracy*.012+this.skills.wrSpeed*.005+this.skills.hands*.025,.45,.98);
           if(Math.random()<chance){wr.catchBall(this.particles);this.football.active=false;this.football.result="CAUGHT";this.roundScore+=150}
           else{this.football.active=false;this.football.result="DROPPED"}
         }
@@ -1562,7 +1574,7 @@ class Game{
 
   reset(){
     this.round=1;this.score=0;this.lives=3;this.totalBrokenTackles=0;
-    this.skills={speed:5,acceleration:5,breakTackle:5,spinMove:5,agility:5,strength:5,throwPower:5,throwAccuracy:5,wrSpeed:5};
+    this.skills={speed:5,acceleration:5,breakTackle:5,spinMove:5,agility:5,strength:5,throwPower:5,throwAccuracy:5,wrSpeed:5,hands:5};
   }
 }
 

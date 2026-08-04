@@ -1,10 +1,10 @@
-# 1v1 Football (Open Field) — Open Field V7
+# Openfield Football
+
+![Openfield Football start screen](docs/images/v7-hero-menu.png)
 
 A browser-based **arcade American football game** — dodge defenders, pass to your
-wide receiver, and score touchdowns. Built as a single self-contained HTML file
+wide receivers, and score touchdowns. Built as a single self-contained HTML file
 with a Node/Vm harness for regression checks.
-
-![Open Field V7 start screen](docs/images/v7-hero-menu.png)
 
 ## Features
 - Neon cyberpunk launch menu with lives + stamina HUD
@@ -13,9 +13,10 @@ with a Node/Vm harness for regression checks.
 - Pass to WR 1 / 2 / 3 with `5` / `6` / `7`
 - 3-WR roster with route running + openness HUD
 - Dynamic defensive scout screen before each round
-- 7 defender archetypes with stamina-gated special abilities
+- 8 defender archetypes (incl. the new **LOB** tight-zone closer) with stamina-gated special abilities
 - Wrap-up struggle system: fight / break free / get tackled
-- Set-factor QB pass accuracy
+- Set-factor QB pass accuracy (plant your feet for a better throw)
+- **HANDS** skill upgrade: more reliable catches, fewer drops
 
 ## Tech stack
 - Single HTML file game loop
@@ -32,7 +33,7 @@ open open_field_v6.html
 
 ## Project structure
 ```
-├── open_field_v6.html        # Latest playable build = Open Field V7
+├── open_field_v6.html        # Latest playable build
 ├── harness.js                 # Headless harness for automated checks
 ├── test.js                    # Legacy harness tests
 ├── scripts/verify-v7.cjs      # V7 feature verification
@@ -42,7 +43,7 @@ open open_field_v6.html
 ```
 
 ## Screenshots / Visual Walkthrough
-- `docs/images/v7-hero-menu.png` — V7 start screen with controls
+- `docs/images/v7-hero-menu.png` — start screen with controls
 - `docs/images/v7-upgrade-scout.png` — Skill upgrade screen
 - `docs/images/v7-core-workflow.png` — Round start / HUD state
 
