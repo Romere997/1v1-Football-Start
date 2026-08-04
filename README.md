@@ -25,8 +25,8 @@ with a Node/Vm harness for regression checks.
 
 ## Quickstart
 ```bash
-git clone https://github.com/Romere997/1v1-Football-Start.git
-cd 1v1-Football-Start
+git clone https://github.com/Romere997/OpenfieldFootball.git
+cd OpenfieldFootball
 npm test
 open open_field_v6.html
 ```
