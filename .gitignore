@@ -1,0 +1,19 @@
+# Dependencies — never commit
+node_modules/
+
+# Build output
+dist/
+v8/dist/
+
+# Editor/agent machine-specific config (Argent writes these; not repo content)
+.vscode/
+.claude/
+.cursor/
+.gemini/
+
+# OS noise
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
